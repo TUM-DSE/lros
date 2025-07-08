@@ -1,0 +1,6 @@
+################################################################################
+# Library registration
+################################################################################
+$(eval $(call addlib, vacceltest))
+
+VACCELTEST_SRCS-y += $(VACCELTEST_BASE)/unikraft_main.c

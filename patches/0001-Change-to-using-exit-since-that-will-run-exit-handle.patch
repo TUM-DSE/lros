@@ -1,0 +1,103 @@
+From 072d0a74e5b5fcb72e64df12a0eb7da4594d45b8 Mon Sep 17 00:00:00 2001
+From: Simon Kammermeier <simon.kammermeier@tum.de>
+Date: Fri, 25 Jul 2025 16:08:49 +0000
+Subject: [PATCH] Change to using exit since that will run exit handlers
+
+---
+ examples/main/main.cpp | 20 ++++++++++----------
+ 1 file changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/examples/main/main.cpp b/examples/main/main.cpp
+index 374ed47a..e6fd9a73 100644
+--- a/examples/main/main.cpp
++++ b/examples/main/main.cpp
+@@ -204,7 +204,7 @@ int main(int argc, char ** argv) {
+ 
+     if (model == NULL) {
+         LOG_ERR("%s: error: unable to load model\n", __func__);
+-        return 1;
++        exit(1);
+     }
+ 
+     LOG_INF("%s: llama threadpool init, n_threads = %d\n", __func__, (int) params.cpuparams.n_threads);
+@@ -221,7 +221,7 @@ int main(int argc, char ** argv) {
+         threadpool_batch = ggml_threadpool_new(&tpp_batch);
+         if (!threadpool_batch) {
+             LOG_ERR("%s: batch threadpool create failed : n_threads %d\n", __func__, tpp_batch.n_threads);
+-            return 1;
++            exit(1);
+         }
+ 
+         // Start the non-batch threadpool in the paused state
+@@ -231,7 +231,7 @@ int main(int argc, char ** argv) {
+     struct ggml_threadpool * threadpool = ggml_threadpool_new(&tpp);
+     if (!threadpool) {
+         LOG_ERR("%s: threadpool create failed : n_threads %d\n", __func__, tpp.n_threads);
+-        return 1;
++        exit(1);
+     }
+ 
+     llama_attach_threadpool(ctx, threadpool, threadpool_batch);
+@@ -274,7 +274,7 @@ int main(int argc, char ** argv) {
+             size_t n_token_count_out = 0;
+             if (!llama_state_load_file(ctx, path_session.c_str(), session_tokens.data(), session_tokens.capacity(), &n_token_count_out)) {
+                 LOG_ERR("%s: failed to load session file '%s'\n", __func__, path_session.c_str());
+-                return 1;
++                exit(1);
+             }
+             session_tokens.resize(n_token_count_out);
+             LOG_INF("%s: loaded a session with prompt size of %d tokens\n", __func__, (int)session_tokens.size());
+@@ -313,14 +313,14 @@ int main(int argc, char ** argv) {
+             LOG_WRN("embd_inp was considered empty and bos was added: %s\n", string_from(ctx, embd_inp).c_str());
+         } else {
+             LOG_ERR("input is empty\n");
+-            return -1;
++            exit(-1);
+         }
+     }
+ 
+     // Tokenize negative prompt
+     if ((int) embd_inp.size() > n_ctx - 4) {
+         LOG_ERR("%s: prompt is too long (%d tokens, max %d)\n", __func__, (int) embd_inp.size(), n_ctx - 4);
+-        return 1;
++        exit(1);
+     }
+ 
+     // debug message about similarity of saved session, if applicable
+@@ -451,7 +451,7 @@ int main(int argc, char ** argv) {
+     smpl = common_sampler_init(model, sparams);
+     if (!smpl) {
+         LOG_ERR("%s: failed to initialize sampling subsystem\n", __func__);
+-        return 1;
++        exit(1);
+     }
+ 
+     LOG_INF("sampler seed: %u\n",     common_sampler_get_seed(smpl));
+@@ -530,7 +530,7 @@ int main(int argc, char ** argv) {
+ 
+         if (llama_encode(ctx, llama_batch_get_one(enc_input_buf, enc_input_size))) {
+             LOG_ERR("%s : failed to eval\n", __func__);
+-            return 1;
++            exit(1);
+         }
+ 
+         llama_token decoder_start_token_id = llama_model_decoder_start_token(model);
+@@ -650,7 +650,7 @@ int main(int argc, char ** argv) {
+ 
+                 if (llama_decode(ctx, llama_batch_get_one(&embd[i], n_eval))) {
+                     LOG_ERR("%s : failed to eval\n", __func__);
+-                    return 1;
++                    exit(1);
+                 }
+ 
+                 n_past += n_eval;
+@@ -938,5 +938,5 @@ int main(int argc, char ** argv) {
+     ggml_threadpool_free(threadpool);
+     ggml_threadpool_free(threadpool_batch);
+ 
+-    return 0;
++    exit(0);
+ }
+-- 
+2.49.0
+

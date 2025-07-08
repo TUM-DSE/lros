@@ -1,0 +1,2925 @@
+Subject: [PATCH] Force legacy virtio for unikraft
+virtio-accel(ci): Add manifest
+virtio-accel: Add Dockerfile and workflow to build and push image
+virtio-accel: Rename vaccelrt to vaccel
+virtio-accel: Use pkg-config to discover libvaccel and fix static build
+virtio-accel: Add per session timers
+virtio-accel: Move to a subproject
+virtio-accel: Fix session bookkeeping
+virtio-accel: Start session id numbering from 1
+virtio-accel: Update vaccelRT backend to use genop introduced in upstream
+Integrate virtio-accel
+---
+Index: meson.build
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/meson.build b/meson.build
+--- a/meson.build	(revision 407f9a4b121eb65166375c410e14d7b704bc1106)
++++ b/meson.build	(revision 6298eeb5f4f640bc2f287819bb4611e7a02d8409)
+@@ -3265,6 +3265,10 @@
+   libvduse = libvduse_proj.get_variable('libvduse_dep')
+ endif
+ 
++vaccel_sp = subproject('vaccel')
++vaccel = vaccel_sp.get_variable('vaccel_lib')
++config_host_data.set('CONFIG_VACCEL', vaccel.found())
++
+ #####################
+ # Generated sources #
+ #####################
+@@ -3841,6 +3845,11 @@
+ hwcore = declare_dependency(objects: libhwcore.extract_all_objects(recursive: false))
+ common_ss.add(hwcore)
+ 
++if vaccel.found()
++  specific_ss.add_all(vaccel_sp.get_variable('vaccel_virtio_ss'))
++  system_ss.add_all(vaccel_sp.get_variable('vaccel_ss'))
++endif
++
+ ###########
+ # Targets #
+ ###########
+@@ -4540,6 +4549,7 @@
+ summary_info += {'libpmem support':   libpmem}
+ summary_info += {'libdaxctl support': libdaxctl}
+ summary_info += {'libudev':           libudev}
++summary_info += {'vAccel support':          vaccel}
+ # Dummy dependency, keep .found()
+ summary_info += {'FUSE lseek':        fuse_lseek.found()}
+ summary_info += {'selinux':           selinux}
+Index: meson_options.txt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/meson_options.txt b/meson_options.txt
+--- a/meson_options.txt	(revision 407f9a4b121eb65166375c410e14d7b704bc1106)
++++ b/meson_options.txt	(revision 6298eeb5f4f640bc2f287819bb4611e7a02d8409)
+@@ -303,6 +303,8 @@
+        description: 'virtio-9p support')
+ option('virtfs_proxy_helper', type: 'feature', value: 'auto',
+        description: 'virtio-9p proxy helper support')
++option('vaccel', type: 'feature', value: 'auto', yield: true,
++       description: 'vAccel support')
+ option('libvduse', type: 'feature', value: 'auto',
+        description: 'build VDUSE Library')
+ option('vduse_blk_export', type: 'feature', value: 'auto',
+Index: qapi/qom.json
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/qapi/qom.json b/qapi/qom.json
+--- a/qapi/qom.json	(revision 407f9a4b121eb65166375c410e14d7b704bc1106)
++++ b/qapi/qom.json	(revision 3c76708879e018b8ebefc9e7c6b1cfcf2c7901b6)
+@@ -309,6 +309,20 @@
+   'data': { 'chardev': 'str' },
+   'if': 'CONFIG_VHOST_CRYPTO' }
+ 
++##
++# @AcceldevBackendProperties:
++#
++# Properties for acceldev-backend and acceldev-backend-vaccel objects.
++#
++# @queues: the number of queues for the acceldev backend. Ignored for
++#          acceldev-backend and must be 1 for acceldev-backend-vaccel.
++#          (default: 1)
++#
++# Since: 2.8
++##
++{ 'struct': 'AcceldevBackendProperties',
++  'data': { '*queues': 'uint32' } }
++
+ ##
+ # @DBusVMStateProperties:
+ #
+@@ -1056,6 +1070,10 @@
+     'cryptodev-backend-lkcf',
+     { 'name': 'cryptodev-vhost-user',
+       'if': 'CONFIG_VHOST_CRYPTO' },
++    { 'name': 'acceldev-backend',
++      'if': 'CONFIG_VACCEL' },
++    { 'name': 'acceldev-backend-vaccel',
++      'if': 'CONFIG_VACCEL' },
+     'dbus-vmstate',
+     'filter-buffer',
+     'filter-dump',
+@@ -1130,6 +1148,10 @@
+       'cryptodev-backend-lkcf':     'CryptodevBackendProperties',
+       'cryptodev-vhost-user':       { 'type': 'CryptodevVhostUserProperties',
+                                       'if': 'CONFIG_VHOST_CRYPTO' },
++      'acceldev-backend':           { 'type': 'AcceldevBackendProperties',
++                                      'if': 'CONFIG_VACCEL' },
++      'acceldev-backend-vaccel':  { 'type': 'AcceldevBackendProperties',
++                                      'if': 'CONFIG_VACCEL' },
+       'dbus-vmstate':               'DBusVMStateProperties',
+       'filter-buffer':              'FilterBufferProperties',
+       'filter-dump':                'FilterDumpProperties',
+Index: scripts/meson-buildoptions.sh
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/scripts/meson-buildoptions.sh b/scripts/meson-buildoptions.sh
+--- a/scripts/meson-buildoptions.sh	(revision 1d3452390a169033f91095610a6d2b25f3bb2061)
++++ b/scripts/meson-buildoptions.sh	(revision 6298eeb5f4f640bc2f287819bb4611e7a02d8409)
+@@ -190,6 +190,7 @@
+   printf "%s\n" '  u2f             U2F emulation support'
+   printf "%s\n" '  uadk            UADK Library support'
+   printf "%s\n" '  usb-redir       libusbredir support'
++  printf "%s\n" '  vaccel          vAccel support'
+   printf "%s\n" '  vde             vde network backend support'
+   printf "%s\n" '  vdi             vdi image format support'
+   printf "%s\n" '  vduse-blk-export'
+@@ -507,6 +508,8 @@
+     --disable-uadk) printf "%s" -Duadk=disabled ;;
+     --enable-usb-redir) printf "%s" -Dusb_redir=enabled ;;
+     --disable-usb-redir) printf "%s" -Dusb_redir=disabled ;;
++    --enable-vaccel) printf "%s" -Dvaccel=enabled ;;
++    --disable-vaccel) printf "%s" -Dvaccel=disabled ;;
+     --enable-vde) printf "%s" -Dvde=enabled ;;
+     --disable-vde) printf "%s" -Dvde=disabled ;;
+     --enable-vdi) printf "%s" -Dvdi=enabled ;;
+Index: subprojects/vaccel/backends/acceldev.c
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/backends/acceldev.c b/subprojects/vaccel/backends/acceldev.c
+new file mode 100644
+--- /dev/null	(revision 3c76708879e018b8ebefc9e7c6b1cfcf2c7901b6)
++++ b/subprojects/vaccel/backends/acceldev.c	(revision 3c76708879e018b8ebefc9e7c6b1cfcf2c7901b6)
+@@ -0,0 +1,253 @@
++#include "qemu/osdep.h"
++#include "../include/sysemu/acceldev.h"
++#include "qapi/error.h"
++#include "qapi/visitor.h"
++#include "qemu/config-file.h"
++#include "qom/object_interfaces.h"
++#include "../include/hw/virtio/virtio-accel.h"
++
++
++static QTAILQ_HEAD(, AccelDevBackendClient) accel_clients;
++
++AccelDevBackendClient *
++acceldev_backend_new_client(const char *model, const char *name)
++{
++    AccelDevBackendClient *c;
++
++    c = g_malloc0(sizeof(AccelDevBackendClient));
++    c->model = g_strdup(model);
++    if (name) {
++        c->name = g_strdup(name);
++    }
++
++    QTAILQ_INSERT_TAIL(&accel_clients, c, next);
++
++    return c;
++}
++
++void acceldev_backend_free_client(AccelDevBackendClient *c)
++{
++    QTAILQ_REMOVE(&accel_clients, c, next);
++    g_free(c->name);
++    g_free(c->model);
++    g_free(c->info_str);
++    g_free(c);
++}
++
++void acceldev_backend_cleanup(AccelDevBackend *ab, Error **errp)
++{
++    AccelDevBackendClass *abc =
++                  ACCELDEV_BACKEND_GET_CLASS(ab);
++
++    if (abc->cleanup) {
++        abc->cleanup(ab, errp);
++    }
++}
++
++int64_t acceldev_backend_create_session(
++           AccelDevBackend *ab,
++           AccelDevBackendSessionInfo *sess_info,
++           uint32_t queue_index, Error **errp)
++{
++    AccelDevBackendClass *abc =
++                      ACCELDEV_BACKEND_GET_CLASS(ab);
++
++    if (abc->create_session) {
++        return abc->create_session(ab, sess_info, queue_index, errp);
++    }
++
++    return -VIRTIO_ACCEL_ERR;
++}
++
++int acceldev_backend_destroy_session(
++                 AccelDevBackend *ab,
++                 int64_t sess_id,
++                 uint32_t queue_index, Error **errp)
++{
++    AccelDevBackendClass *abc =
++                      ACCELDEV_BACKEND_GET_CLASS(ab);
++
++    if (abc->destroy_session) {
++        return abc->destroy_session(ab, sess_id, queue_index, errp);
++    }
++
++    return -VIRTIO_ACCEL_ERR;
++}
++
++int acceldev_backend_operation(
++                 AccelDevBackend *ab,
++                 AccelDevBackendOpInfo *op_info,
++                 uint32_t queue_index, Error **errp)
++{
++    AccelDevBackendClass *abc =
++                      ACCELDEV_BACKEND_GET_CLASS(ab);
++
++    if (abc->do_op) {
++        return abc->do_op(ab, op_info, queue_index, errp);
++    }
++
++    return -VIRTIO_ACCEL_ERR;
++}
++
++int acceldev_backend_timer_start(
++                 AccelDevBackend *ab,
++                 int64_t sess_id,
++                 const char *name,
++                 uint32_t queue_index, Error **errp)
++{
++    AccelDevBackendClass *abc =
++                      ACCELDEV_BACKEND_GET_CLASS(ab);
++
++    if (abc->timer_start) {
++        return abc->timer_start(ab, sess_id, name, queue_index, errp);
++    }
++
++    return -VIRTIO_ACCEL_ERR;
++}
++
++int acceldev_backend_timer_stop(
++                 AccelDevBackend *ab,
++                 int64_t sess_id,
++                 const char *name,
++                 uint32_t queue_index, Error **errp)
++{
++    AccelDevBackendClass *abc =
++                      ACCELDEV_BACKEND_GET_CLASS(ab);
++
++    if (abc->timer_stop) {
++        return abc->timer_stop(ab, sess_id, name, queue_index, errp);
++    }
++
++    return -VIRTIO_ACCEL_ERR;
++}
++
++int acceldev_backend_get_timers(
++                 AccelDevBackend *ab,
++                 AccelDevBackendOpInfo *op_info,
++                 uint32_t queue_index, Error **errp)
++{
++    AccelDevBackendClass *abc =
++                      ACCELDEV_BACKEND_GET_CLASS(ab);
++
++    if (abc->do_op) {
++        return abc->timers_get(ab, op_info, queue_index, errp);
++    }
++
++    return -VIRTIO_ACCEL_ERR;
++}
++
++static void
++acceldev_backend_get_queues(Object *obj, Visitor *v, const char *name,
++                             void *opaque, Error **errp)
++{
++    AccelDevBackend *ab = ACCELDEV_BACKEND(obj);
++    uint32_t value = ab->conf.peers.queues;
++
++    visit_type_uint32(v, name, &value, errp);
++}
++
++static void
++acceldev_backend_set_queues(Object *obj, Visitor *v, const char *name,
++                             void *opaque, Error **errp)
++{
++    AccelDevBackend *ab = ACCELDEV_BACKEND(obj);
++    uint32_t value;
++
++    if (!visit_type_uint32(v, name, &value, errp))
++        return;
++
++    if (!value) {
++        error_setg(errp, "Property '%s.%s' doesn't take value '%"
++                   PRIu32 "'", object_get_typename(obj), name, value);
++        return;
++    }
++    ab->conf.peers.queues = value;
++}
++
++static void
++acceldev_backend_complete(UserCreatable *uc, Error **errp)
++{
++    AccelDevBackend *ab = ACCELDEV_BACKEND(uc);
++    AccelDevBackendClass *abc = ACCELDEV_BACKEND_GET_CLASS(uc);
++
++    if (abc->init)
++        abc->init(ab, errp);
++
++    return;
++}
++
++void acceldev_backend_set_used(AccelDevBackend *ab, bool used)
++{
++    ab->is_used = used;
++}
++
++bool acceldev_backend_is_used(AccelDevBackend *ab)
++{
++    return ab->is_used;
++}
++
++void acceldev_backend_set_ready(AccelDevBackend *ab, bool ready)
++{
++    ab->ready = ready;
++}
++
++bool acceldev_backend_is_ready(AccelDevBackend *ab)
++{
++    return ab->ready;
++}
++
++static bool
++acceldev_backend_can_be_deleted(UserCreatable *uc)
++{
++    return !acceldev_backend_is_used(ACCELDEV_BACKEND(uc));
++}
++
++static void acceldev_backend_instance_init(Object *obj)
++{
++    /* Initialize devices' queues property to 1 */
++    object_property_set_int(obj, "queues", 1, NULL);
++}
++
++static void acceldev_backend_finalize(Object *obj)
++{
++    AccelDevBackend *ab = ACCELDEV_BACKEND(obj);
++
++    acceldev_backend_cleanup(ab, NULL);
++}
++
++static void
++acceldev_backend_class_init(ObjectClass *oc, void *data)
++{
++    UserCreatableClass *ucc = USER_CREATABLE_CLASS(oc);
++
++    ucc->complete = acceldev_backend_complete;
++    ucc->can_be_deleted = acceldev_backend_can_be_deleted;
++
++    QTAILQ_INIT(&accel_clients);
++    object_class_property_add(oc, "queues", "uint32",
++                          acceldev_backend_get_queues,
++                          acceldev_backend_set_queues,
++                          NULL, NULL);
++}
++
++static const TypeInfo acceldev_backend_info = {
++    .name = TYPE_ACCELDEV_BACKEND,
++    .parent = TYPE_OBJECT,
++    .instance_size = sizeof(AccelDevBackend),
++    .instance_init = acceldev_backend_instance_init,
++    .instance_finalize = acceldev_backend_finalize,
++    .class_size = sizeof(AccelDevBackendClass),
++    .class_init = acceldev_backend_class_init,
++    .interfaces = (InterfaceInfo[]) {
++        { TYPE_USER_CREATABLE },
++        { }
++    }
++};
++
++static void
++acceldev_backend_register_types(void)
++{
++    type_register_static(&acceldev_backend_info);
++}
++
++type_init(acceldev_backend_register_types);
+Index: subprojects/vaccel/hw/virtio/virtio-accel-pci.c
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/hw/virtio/virtio-accel-pci.c b/subprojects/vaccel/hw/virtio/virtio-accel-pci.c
+new file mode 100644
+--- /dev/null	(revision d2f134a26a663673203a13fea15173578f65a716)
++++ b/subprojects/vaccel/hw/virtio/virtio-accel-pci.c	(revision d2f134a26a663673203a13fea15173578f65a716)
+@@ -0,0 +1,84 @@
++#include "qemu/osdep.h"
++#include "hw/pci/pci.h"
++#include "hw/qdev-properties.h"
++#include "hw/virtio/virtio.h"
++#include "hw/virtio/virtio-bus.h"
++#include "hw/virtio/virtio-pci.h"
++#include "../../include/hw/virtio/virtio-accel.h"
++#include "qapi/error.h"
++#include "qemu/module.h"
++
++typedef struct VirtIOAccelPCI VirtIOAccelPCI;
++
++/*
++ * virtio-accel-pci: This extends VirtioPCIProxy.
++ */
++#define TYPE_VIRTIO_ACCEL_PCI "virtio-accel-pci"
++DECLARE_INSTANCE_CHECKER(VirtIOAccelPCI, VIRTIO_ACCEL_PCI,
++                         TYPE_VIRTIO_ACCEL_PCI)
++
++struct VirtIOAccelPCI {
++    VirtIOPCIProxy parent_obj;
++    VirtIOAccel vdev;
++};
++
++static Property virtio_accel_pci_properties[] = {
++    DEFINE_PROP_BIT("ioeventfd", VirtIOPCIProxy, flags,
++                    VIRTIO_PCI_FLAG_USE_IOEVENTFD_BIT, true),
++    DEFINE_PROP_UINT32("vectors", VirtIOPCIProxy, nvectors, 2),
++    DEFINE_PROP_END_OF_LIST(),
++};
++
++static void virtio_accel_pci_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
++{
++    VirtIOAccelPCI *vaccel = VIRTIO_ACCEL_PCI(vpci_dev);
++    DeviceState *vdev = DEVICE(&vaccel->vdev);
++
++    if (vaccel->vdev.conf.runtime == NULL) {
++        error_setg(errp, "'runtime' parameter expects a valid object");
++        return;
++    }
++
++    //virtio_pci_force_virtio_1(vpci_dev);
++    virtio_pci_disable_modern(vpci_dev);
++    virtio_pci_legacy(vpci_dev);
++    if (!qdev_realize(vdev, BUS(&vpci_dev->bus), errp)) {
++        return;
++    }
++}
++
++static void virtio_accel_pci_class_init(ObjectClass *klass, void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    VirtioPCIClass *k = VIRTIO_PCI_CLASS(klass);
++    PCIDeviceClass *pcidev_k = PCI_DEVICE_CLASS(klass);
++
++    k->realize = virtio_accel_pci_realize;
++    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
++    device_class_set_props(dc, virtio_accel_pci_properties);
++    pcidev_k->vendor_id = PCI_VENDOR_ID_REDHAT_QUMRANET;
++    pcidev_k->device_id = 0x1015;
++    pcidev_k->revision = VIRTIO_PCI_ABI_VERSION;
++    pcidev_k->class_id = PCI_CLASS_OTHERS;
++}
++
++static void virtio_accel_initfn(Object *obj)
++{
++    VirtIOAccelPCI *dev = VIRTIO_ACCEL_PCI(obj);
++
++    virtio_instance_init_common(obj, &dev->vdev, sizeof(dev->vdev),
++                                TYPE_VIRTIO_ACCEL);
++}
++
++static const VirtioPCIDeviceTypeInfo virtio_accel_pci_info = {
++    .generic_name  = TYPE_VIRTIO_ACCEL_PCI,
++    .instance_size = sizeof(VirtIOAccelPCI),
++    .instance_init = virtio_accel_initfn,
++    .class_init    = virtio_accel_pci_class_init,
++};
++
++static void virtio_accel_pci_register_types(void)
++{
++    virtio_pci_types_register(&virtio_accel_pci_info);
++}
++type_init(virtio_accel_pci_register_types)
+Index: subprojects/vaccel/hw/virtio/virtio-accel.c
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/hw/virtio/virtio-accel.c b/subprojects/vaccel/hw/virtio/virtio-accel.c
+new file mode 100644
+--- /dev/null	(revision 3c76708879e018b8ebefc9e7c6b1cfcf2c7901b6)
++++ b/subprojects/vaccel/hw/virtio/virtio-accel.c	(revision 3c76708879e018b8ebefc9e7c6b1cfcf2c7901b6)
+@@ -0,0 +1,641 @@
++#include "qemu/osdep.h"
++#include "qemu/iov.h"
++#include "qemu/main-loop.h"
++#include "qemu/module.h"
++#include "qapi/error.h"
++#include "qemu/error-report.h"
++
++#include "hw/virtio/virtio.h"
++#include "../../include/hw/virtio/virtio-accel.h"
++#include "hw/qdev-properties.h"
++#include "hw/virtio/virtio-access.h"
++#include "../../include/standard-headers/linux/virtio_ids.h"
++
++
++#define VIRTIO_ACCEL_VM_VERSION 1
++
++static void virtio_accel_init_request(VirtIOAccelReq *req,
++                    VirtIOAccel *vaccel, VirtQueue *vq)
++{
++    req->flags = 0;
++    req->vq = vq;
++    req->vaccel = vaccel;
++    req->in_iov = NULL;
++    req->out_iov = NULL;
++    req->in_niov = 0;
++    req->out_niov = 0;
++    req->in_iov_len = 0;
++    req->in_status = NULL;
++}
++
++static void virtio_accel_free_request(VirtIOAccelReq *req)
++{
++    if (req->hdr.op_type == VIRTIO_ACCEL_CREATE_SESSION ||
++            req->hdr.op_type == VIRTIO_ACCEL_DO_OP ||
++            req->hdr.op_type == VIRTIO_ACCEL_GET_TIMERS) {
++        if (req->hdr.op.in)
++            g_free(req->hdr.op.in);
++        if (req->hdr.op.out)
++            g_free(req->hdr.op.out);
++    }
++    if (req)
++        g_free(req);
++}
++
++static void virtio_accel_complete_request(VirtIOAccelReq *req, int ret)
++{
++    VirtIOAccel *vaccel = req->vaccel;
++    VirtIODevice *vdev = VIRTIO_DEVICE(vaccel);
++    uint32_t status;
++
++    if (ret < 0)
++        status = (uint32_t)-ret;
++    else
++        status = (uint32_t)ret;
++
++    virtio_stl_p(vdev, req->in_status, status);
++    virtqueue_push(req->vq, &req->elem, req->in_iov_len);
++    virtio_notify(vdev, req->vq);
++}
++
++static VirtIOAccelReq *
++virtio_accel_get_request(VirtIOAccel *va, VirtQueue *vq)
++{
++    VirtIOAccelReq *req = virtqueue_pop(vq, sizeof(VirtIOAccelReq));
++
++    if (req) {
++        virtio_accel_init_request(req, va, vq);
++    }
++    return req;
++}
++
++static int
++virtio_accel_vaccel_create_session(VirtIOAccelReq *req)
++{
++    VirtIOAccel *vaccel = req->vaccel;
++    VirtIODevice *vdev = VIRTIO_DEVICE(vaccel);
++    struct virtio_accel_hdr *h = &req->hdr;
++    int queue_index = virtio_get_queue_index(req->vq);
++    AccelDevBackendSessionInfo info;
++    int64_t sess_id;
++    int ret = -VIRTIO_ACCEL_ERR;
++    size_t r;
++    Error *local_err = NULL;
++
++    info.op_type = h->op_type;
++    info.op.in = (AccelDevBackendArg *)h->op.in;
++    info.op.out = (AccelDevBackendArg *)h->op.out;
++    info.op.in_nr = h->op.in_nr;
++    info.op.out_nr = h->op.out_nr;
++    sess_id = acceldev_backend_create_session(
++                                     vaccel->runtime,
++                                     &info, queue_index, &local_err);
++    if (sess_id >= 0) {
++        req->hdr.sess_id = (uint32_t)sess_id;
++        for (int i = 0; i < h->op.in_nr; i++) {
++            r = iov_from_buf(req->in_iov, req->in_niov, 0, info.op.in[i].buf,
++                            info.op.in[i].len);
++            if (unlikely(r != info.op.in[i].len)) {
++                virtio_error(vdev, "virtio-accel in[%d] data incorrect", i);
++            return -VIRTIO_ACCEL_ERR;
++        }
++
++                iov_discard_front(&req->in_iov, &req->in_niov,
++                                info.op.in[i].len);
++        }
++
++        VADPRINTF("runtime create session_id=%" PRIu32 " successful\n",
++                  req->hdr.sess_id);
++        ret = VIRTIO_ACCEL_OK;
++    } else {
++        if (local_err) {
++            error_report_err(local_err);
++        }
++        ret = (int)sess_id;
++    }
++
++    return ret;
++}
++
++static int
++virtio_accel_vaccel_destroy_session(VirtIOAccelReq *req)
++{
++    VirtIOAccel *vaccel = req->vaccel;
++    struct virtio_accel_hdr *h = &req->hdr;
++    int queue_index = virtio_get_queue_index(req->vq);
++    int ret = -VIRTIO_ACCEL_ERR;
++    Error *local_err = NULL;
++
++    ret = acceldev_backend_destroy_session(
++                                     vaccel->runtime,
++                                     h->sess_id,
++                                     queue_index, &local_err);
++    if (ret >= 0) {
++        VADPRINTF("runtime destroy session_id=%" PRIu32 " successful\n",
++                req->hdr.sess_id);
++    } else {
++        if (local_err) {
++            error_report_err(local_err);
++        }
++    }
++
++    return ret;
++}
++
++static int
++virtio_accel_vaccel_do_op(VirtIOAccelReq *req)
++{
++    VirtIOAccel *vaccel = req->vaccel;
++    VirtIODevice *vdev = VIRTIO_DEVICE(vaccel);
++    struct virtio_accel_hdr *h = &req->hdr;
++    int queue_index = virtio_get_queue_index(req->vq);
++    AccelDevBackendOpInfo info;
++    int ret = -VIRTIO_ACCEL_ERR;
++    size_t r;
++    Error *local_err = NULL;
++
++    acceldev_backend_timer_start(vaccel->runtime, h->sess_id, "do op",
++                                 queue_index, &local_err);
++    info.op_type = h->op_type;
++    info.sess_id = h->sess_id;
++    info.op.in = (AccelDevBackendArg *)h->op.in;
++    info.op.out = (AccelDevBackendArg *)h->op.out;
++    info.op.in_nr = h->op.in_nr;
++    info.op.out_nr = h->op.out_nr;
++    ret = acceldev_backend_operation(vaccel->runtime, &info, queue_index,
++                                     &local_err);
++
++    if (ret >= 0) {
++        for (int i = 0; i < h->op.in_nr; i++) {
++            r = iov_from_buf(req->in_iov, req->in_niov, 0, info.op.in[i].buf,
++                            info.op.in[i].len);
++            if (unlikely(r != info.op.in[i].len)) {
++                virtio_error(vdev, "virtio-accel in[%d] data incorrect", i);
++                return -VIRTIO_ACCEL_ERR;
++            }
++
++            iov_discard_front(&req->in_iov, &req->in_niov,
++                            info.op.in[i].len);
++        }
++
++        VADPRINTF("runtime op session_id=%" PRId64 " successful\n",
++                info.sess_id);
++    } else {
++        if (local_err) {
++            error_report_err(local_err);
++        }
++    }
++
++    acceldev_backend_timer_stop(vaccel->runtime, h->sess_id, "do op",
++                                 queue_index, &local_err);
++
++    return ret;
++}
++
++static int
++virtio_accel_vaccel_get_timers(VirtIOAccelReq *req)
++{
++    VirtIOAccel *vaccel = req->vaccel;
++    VirtIODevice *vdev = VIRTIO_DEVICE(vaccel);
++    struct virtio_accel_hdr *h = &req->hdr;
++    int queue_index = virtio_get_queue_index(req->vq);
++    AccelDevBackendOpInfo info;
++    int ret = -VIRTIO_ACCEL_ERR;
++    size_t r;
++    Error *local_err = NULL;
++
++    info.op_type = h->op_type;
++    info.sess_id = h->sess_id;
++    info.op.in = (AccelDevBackendArg *)h->op.in;
++    info.op.out = (AccelDevBackendArg *)h->op.out;
++    info.op.in_nr = h->op.in_nr;
++    info.op.out_nr = h->op.out_nr;
++
++    ret = acceldev_backend_get_timers(vaccel->runtime, &info, queue_index,
++                                     &local_err);
++
++    if (ret >= 0) {
++        for (int i = 0; i < h->op.in_nr; i++) {
++            r = iov_from_buf(req->in_iov, req->in_niov, 0, info.op.in[i].buf,
++                            info.op.in[i].len);
++            if (unlikely(r != info.op.in[i].len)) {
++                virtio_error(vdev, "virtio-accel in[%d] data incorrect", i);
++                return -VIRTIO_ACCEL_ERR;
++            }
++
++            iov_discard_front(&req->in_iov, &req->in_niov,
++                            info.op.in[i].len);
++        }
++
++        VADPRINTF("runtime op session_id=%" PRId64 " successful\n",
++                info.sess_id);
++    } else {
++        if (local_err) {
++            error_report_err(local_err);
++        }
++    }
++
++    return ret;
++}
++
++static void
++virtio_accel_handle_req_header_data(VirtIOAccelReq *req)
++{
++    VirtIOAccel *vaccel = req->vaccel;
++    VirtIODevice *vdev = VIRTIO_DEVICE(vaccel);
++    struct virtio_accel_hdr *h = &req->hdr;
++    int i;
++    size_t r;
++    AccelDevBackendArg *gop_arg;
++
++    h->op_type = virtio_ldl_p(vdev, &h->op_type);
++    switch (h->op_type) {
++    case VIRTIO_ACCEL_CREATE_SESSION:
++    case VIRTIO_ACCEL_DO_OP:
++    case VIRTIO_ACCEL_GET_TIMERS:
++        h->op.in_nr = virtio_ldl_p(vdev, &h->op.in_nr);
++        h->op.out_nr = virtio_ldl_p(vdev, &h->op.out_nr);
++        if (h->op.out_nr > 0) {
++            gop_arg = g_new0(AccelDevBackendArg, h->op.out_nr);
++            for (i = 0; i < h->op.out_nr; i++) {
++                gop_arg[i].len = h->op.out[i].len;
++                gop_arg[i].buf = g_malloc0(h->op.out[i].len);
++                r = iov_to_buf(req->out_iov, req->out_niov, 0, gop_arg[i].buf,
++                                h->op.out[i].len);
++                if (unlikely(r !=  h->op.out[i].len)) {
++                    virtio_error(vdev, "virtio-accel gop_arg[%d] too short", i);
++                    return;
++                }
++                iov_discard_front(&req->out_iov, &req->out_niov,
++                                h->op.out[i].len);
++            }
++            h->op.out = (struct virtio_accel_arg *)gop_arg;
++        }
++        if (h->op.in_nr > 0) {
++            gop_arg = g_new0(AccelDevBackendArg, h->op.in_nr);
++            int offset = 0;
++            for (i = 0; i < h->op.in_nr; i++) {
++                gop_arg[i].len = h->op.in[i].len;
++                gop_arg[i].buf = g_malloc0(h->op.in[i].len);
++                r = iov_to_buf(req->in_iov, req->in_niov, offset, gop_arg[i].buf,
++                                h->op.in[i].len);
++                if (unlikely(r !=  h->op.in[i].len)) {
++                    virtio_error(vdev, "virtio-accel gop_arg[%d] too short", i);
++                    return;
++                }
++                // don't discard these yet, we need to write them first
++                offset += h->op.in[i].len;
++            }
++            h->op.in = (struct virtio_accel_arg *)gop_arg;
++        }
++        break;
++    case VIRTIO_ACCEL_DESTROY_SESSION:
++        h->sess_id = virtio_ldl_p(vdev, &h->sess_id);
++        break;
++    default:
++        break;
++    }
++}
++
++static int
++virtio_accel_handle_request(VirtIOAccelReq *req)
++{
++    VirtIOAccel *vaccel = req->vaccel;
++    VirtIODevice *vdev = VIRTIO_DEVICE(vaccel);
++    VirtQueueElement *elem = &req->elem;
++    int ret;
++    struct iovec *in_iov, *out_iov;
++    unsigned int in_niov, out_niov;
++    uint32_t status = VIRTIO_ACCEL_ERR;
++    int queue_index = virtio_get_queue_index(req->vq);
++    Error *local_err = NULL;
++
++    if (elem->out_num < 1 || elem->in_num < 1) {
++        virtio_error(vdev, "virtio-accel request missing headers");
++        return -1;
++    }
++
++    out_iov = elem->out_sg;
++    out_niov = elem->out_num;
++    in_iov = elem->in_sg;
++    in_niov = elem->in_num;
++
++    VADPRINTF("handle request in_iovs=%u, out_iovs=%u\n", in_niov, out_niov);
++    if (unlikely(iov_to_buf(out_iov, out_niov, 0, &req->hdr,
++                            sizeof(req->hdr)) != sizeof(req->hdr))) {
++        virtio_error(vdev, "virtio-accel request hdr too short");
++        return -1;
++    }
++    iov_discard_front(&out_iov, &out_niov, sizeof(req->hdr));
++
++    uint32_t sess_id = virtio_ldl_p(vdev, &req->hdr.sess_id);
++    uint32_t op_type = virtio_ldl_p(vdev, &req->hdr.op_type);
++    if (op_type == VIRTIO_ACCEL_DO_OP) {
++        acceldev_backend_timer_start(vaccel->runtime, sess_id, "prepare header",
++                                     queue_index, &local_err);
++    }
++
++    if (req->hdr.op.out_nr > 0) {
++        req->hdr.op.out = out_iov[0].iov_base;
++        iov_discard_front(&out_iov, &out_niov,
++                req->hdr.op.out_nr * sizeof(*req->hdr.op.out));
++    }
++    if (req->hdr.op.in_nr > 0) {
++        req->hdr.op.in = out_iov[0].iov_base;
++        iov_discard_front(&out_iov, &out_niov,
++                req->hdr.op.in_nr * sizeof(*req->hdr.op.in));
++    }
++
++    if (in_iov[in_niov - 1].iov_len !=
++            sizeof(status)) {
++        virtio_error(vdev, "virtio-accel request status size incorrect");
++        return -1;
++    }
++    /* We always touch the last byte, so just see how big in_iov is. */
++    req->in_iov_len = iov_size(in_iov, in_niov);
++    req->in_status = (void *)in_iov[in_niov - 1].iov_base
++              + in_iov[in_niov - 1].iov_len
++              - sizeof(*req->in_status);
++    iov_discard_back(in_iov, &in_niov, sizeof(*req->in_status));
++
++    req->in_iov = in_iov;
++    req->in_niov = in_niov;
++    req->out_iov = out_iov;
++    req->out_niov = out_niov;
++
++    virtio_accel_handle_req_header_data(req);
++
++    if (op_type == VIRTIO_ACCEL_DO_OP) {
++        acceldev_backend_timer_stop(vaccel->runtime, sess_id, "prepare header",
++                                     queue_index, &local_err);
++    }
++
++    VADPRINTF("handle request op=%u\n", req->hdr.op_type);
++    switch (req->hdr.op_type) {
++    case VIRTIO_ACCEL_CREATE_SESSION:
++        ret = virtio_accel_vaccel_create_session(req);
++        if (ret >= 0)
++            virtio_stq_p(vdev, in_iov->iov_base, req->hdr.sess_id);
++        break;
++    case VIRTIO_ACCEL_DO_OP:
++        ret = virtio_accel_vaccel_do_op(req);
++        break;
++    case VIRTIO_ACCEL_DESTROY_SESSION:
++        ret = virtio_accel_vaccel_destroy_session(req);
++        break;
++    case VIRTIO_ACCEL_GET_TIMERS:
++        ret = virtio_accel_vaccel_get_timers(req);
++        break;
++    default:
++        error_report("virtio-accel unsupported opcode: %u",
++                     req->hdr.op_type);
++        ret = VIRTIO_ACCEL_NOTSUPP;
++        break;
++    }
++    /* Serious errors, need to reset virtio accel device */
++    if (ret == -EFAULT)
++        return -1;
++
++    virtio_accel_complete_request(req, ret);
++    virtio_accel_free_request(req);
++
++    return 0;
++}
++
++static void virtio_accel_handle_dataq(VirtIODevice *vdev, VirtQueue *vq)
++{
++    VirtIOAccel *vaccel = VIRTIO_ACCEL(vdev);
++    VirtIOAccelReq *req;
++
++    while ((req = virtio_accel_get_request(vaccel, vq))) {
++        if (virtio_accel_handle_request(req) < 0) {
++            virtqueue_detach_element(req->vq, &req->elem, 0);
++            virtio_accel_free_request(req);
++            break;
++        }
++    }
++}
++
++static void virtio_accel_dataq_bh_callback(void *opaque)
++{
++    VirtIOAccelQueue *q = opaque;
++    VirtIOAccel *vaccel = q->vaccel;
++    VirtIODevice *vdev = VIRTIO_DEVICE(vaccel);
++
++    /* This happens when device was stopped but BH wasn't. */
++    if (!vdev->vm_running) {
++        return;
++    }
++
++    /* Just in case the driver is not ready on more */
++    if (unlikely(!(vdev->status & VIRTIO_CONFIG_S_DRIVER_OK))) {
++        return;
++    }
++
++    for (;;) {
++        virtio_accel_handle_dataq(vdev, q->dataq);
++        virtio_queue_set_notification(q->dataq, 1);
++
++        /* Are we done or did the guest add more buffers? */
++        if (virtio_queue_empty(q->dataq)) {
++            break;
++        }
++
++        virtio_queue_set_notification(q->dataq, 0);
++    }
++}
++
++static void
++virtio_accel_dataq_callback(VirtIODevice *vdev, VirtQueue *vq)
++{
++    VirtIOAccel *vaccel = VIRTIO_ACCEL(vdev);
++    VirtIOAccelQueue *q = &vaccel->vqs[virtio_get_queue_index(vq)];
++
++    /* This happens when device was stopped but VCPU wasn't. */
++    if (!vdev->vm_running) {
++        return;
++    }
++    virtio_queue_set_notification(vq, 0);
++    qemu_bh_schedule(q->dataq_bh);
++}
++
++static uint64_t virtio_accel_get_features(VirtIODevice *vdev,
++                                           uint64_t features,
++                                           Error **errp)
++{
++    return features;
++}
++
++static void virtio_accel_reset(VirtIODevice *vdev)
++{
++    VirtIOAccel *vaccel = VIRTIO_ACCEL(vdev);
++    /* multiqueue is disabled by default */
++    vaccel->curr_queue = 1;
++    if (!acceldev_backend_is_ready(vaccel->runtime)) {
++        vaccel->status &= ~VIRTIO_ACCEL_S_HW_READY;
++    } else {
++        vaccel->status |= VIRTIO_ACCEL_S_HW_READY;
++    }
++}
++
++static void virtio_accel_init_config(VirtIODevice *vdev)
++{
++    //VirtIOAccel *vaccel = VIRTIO_ACCEL(vdev);
++
++    // FIXME
++    //vaccel->conf.services =
++    //              vaccel->conf.crypto->conf.services;
++    //vaccel->conf.max_size = vaccel->conf.crypto->conf.max_size;
++    //
++}
++
++static void virtio_accel_device_realize(DeviceState *dev, Error **errp)
++{
++    VirtIODevice *vdev = VIRTIO_DEVICE(dev);
++    VirtIOAccel *vaccel = VIRTIO_ACCEL(dev);
++    int i;
++
++    vaccel->runtime = vaccel->conf.runtime;
++    if (vaccel->runtime == NULL) {
++        error_setg(errp, "'runtime' parameter expects a valid object");
++        return;
++    } else if (acceldev_backend_is_used(vaccel->runtime)) {
++        error_setg(errp, "can't use already used accel backend: %s",
++                object_get_canonical_path_component(OBJECT(
++                        vaccel->conf.runtime)));
++    return;
++    }
++
++
++    vaccel->max_queues = MAX(vaccel->runtime->conf.peers.queues, 1);
++    if (vaccel->max_queues + 1 > VIRTIO_QUEUE_MAX) {
++        error_setg(errp, "Invalid number of queues (= %" PRIu32 "), "
++                   "must be a positive integer less than %d.",
++                   vaccel->max_queues, VIRTIO_QUEUE_MAX);
++        return;
++    }
++
++    virtio_init(vdev, VIRTIO_ID_ACCEL, vaccel->config_size);
++    vaccel->curr_queue = 1;
++    vaccel->vqs = g_new0(VirtIOAccelQueue, vaccel->max_queues);
++    for (i = 0; i < vaccel->max_queues; i++) {
++        vaccel->vqs[i].dataq =
++                 virtio_add_queue(vdev, VIRTQUEUE_MAX_SIZE,
++                         virtio_accel_dataq_callback);
++        vaccel->vqs[i].dataq_bh =
++                 qemu_bh_new(virtio_accel_dataq_bh_callback, &vaccel->vqs[i]);
++        vaccel->vqs[i].vaccel = vaccel;
++    }
++
++    if (!acceldev_backend_is_ready(vaccel->runtime)) {
++        vaccel->status &= ~VIRTIO_ACCEL_S_HW_READY;
++    } else {
++        vaccel->status |= VIRTIO_ACCEL_S_HW_READY;
++    }
++
++    virtio_accel_init_config(vdev);
++    acceldev_backend_set_used(vaccel->runtime, true);
++
++    if (virtio_vdev_has_feature(vdev, VIRTIO_F_RING_PACKED))
++        VADPRINTF("HAS VIRTIO_F_RING_PACKED\n");
++    else
++        VADPRINTF("NO VIRTIO_F_RING_PACKED\n");
++}
++
++static void virtio_accel_device_unrealize(DeviceState *dev)
++{
++    VirtIODevice *vdev = VIRTIO_DEVICE(dev);
++    VirtIOAccel *vaccel = VIRTIO_ACCEL(dev);
++    VirtIOAccelQueue *q;
++    int i, max_queues;
++
++    max_queues = vaccel->multiqueue ? vaccel->max_queues : 1;
++    for (i = 0; i < max_queues; i++) {
++        virtio_delete_queue(vaccel->vqs[i].dataq);
++        q = &vaccel->vqs[i];
++        qemu_bh_delete(q->dataq_bh);
++    }
++
++    g_free(vaccel->vqs);
++
++    virtio_cleanup(vdev);
++    acceldev_backend_set_used(vaccel->runtime, false);
++}
++
++static const VMStateDescription vmstate_virtio_accel = {
++    .name = "virtio-accel",
++    .unmigratable = 1,
++    .minimum_version_id = VIRTIO_ACCEL_VM_VERSION,
++    .version_id = VIRTIO_ACCEL_VM_VERSION,
++    .fields = (VMStateField[]) {
++        VMSTATE_VIRTIO_DEVICE,
++        VMSTATE_END_OF_LIST()
++    },
++};
++
++static Property virtio_accel_properties[] = {
++
++    DEFINE_PROP_LINK("runtime", VirtIOAccel, conf.runtime,
++                     TYPE_ACCELDEV_BACKEND, AccelDevBackend *),
++    DEFINE_PROP_END_OF_LIST(),
++};
++
++static void virtio_accel_get_config(VirtIODevice *vdev, uint8_t *config)
++{
++    VirtIOAccel *va = VIRTIO_ACCEL(vdev);
++    struct virtio_accel_conf cfg = {};
++
++    // TODO:
++    /*
++     * Virtio-crypto device conforms to VIRTIO 1.0 which is always LE,
++     * so we can use LE accessors directly.
++     */
++    //
++    stl_le_p(&cfg.status, va->status);
++    //stl_le_p(&cfg.max_dataqueues, va->max_queues);
++    stl_le_p(&cfg.services, va->conf.services);
++    stq_le_p(&cfg.max_size, va->conf.max_size);
++
++    memcpy(config, &cfg, va->config_size);
++}
++
++static void virtio_accel_class_init(ObjectClass *klass, void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    VirtioDeviceClass *vdc = VIRTIO_DEVICE_CLASS(klass);
++
++    device_class_set_props(dc, virtio_accel_properties);
++    dc->vmsd = &vmstate_virtio_accel;
++    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
++    vdc->realize = virtio_accel_device_realize;
++    vdc->unrealize = virtio_accel_device_unrealize;
++    vdc->get_config = virtio_accel_get_config;
++    vdc->get_features = virtio_accel_get_features;
++    vdc->reset = virtio_accel_reset;
++}
++
++static void virtio_accel_instance_init(Object *obj)
++{
++    VirtIOAccel *vaccel = VIRTIO_ACCEL(obj);
++
++    /*
++     * The default config_size is sizeof(struct virtio_crypto_config).
++     * Can be overriden with virtio_crypto_set_config_size.
++     */
++    vaccel->config_size = sizeof(struct virtio_accel_conf);
++}
++
++static const TypeInfo virtio_accel_info = {
++    .name = TYPE_VIRTIO_ACCEL,
++    .parent = TYPE_VIRTIO_DEVICE,
++    .instance_size = sizeof(VirtIOAccel),
++    .instance_init = virtio_accel_instance_init,
++    .class_init = virtio_accel_class_init,
++};
++
++static void virtio_register_types(void)
++{
++    type_register_static(&virtio_accel_info);
++}
++
++type_init(virtio_register_types)
+Index: subprojects/vaccel/include/hw/virtio/virtio-accel.h
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/include/hw/virtio/virtio-accel.h b/subprojects/vaccel/include/hw/virtio/virtio-accel.h
+new file mode 100644
+--- /dev/null	(revision 6298eeb5f4f640bc2f287819bb4611e7a02d8409)
++++ b/subprojects/vaccel/include/hw/virtio/virtio-accel.h	(revision 6298eeb5f4f640bc2f287819bb4611e7a02d8409)
+@@ -0,0 +1,78 @@
++#ifndef _QEMU_VIRTIO_ACCEL_H
++#define _QEMU_VIRTIO_ACCEL_H
++
++#include "../../standard-headers/linux/virtio_accel.h"
++#include "hw/virtio/virtio.h"
++#include "sysemu/iothread.h"
++#include "../../sysemu/acceldev.h"
++
++
++#define DEBUG_VIRTIO_ACCEL 0
++
++#define VADPRINTF(fmt, ...) \
++do { \
++    if (DEBUG_VIRTIO_ACCEL) { \
++        fprintf(stderr, "virtio_accel: " fmt, ##__VA_ARGS__); \
++    } \
++} while (0)
++
++
++#define TYPE_VIRTIO_ACCEL "virtio-accel-device"
++#define VIRTIO_ACCEL(obj) \
++        OBJECT_CHECK(VirtIOAccel, (obj), TYPE_VIRTIO_ACCEL)
++#define VIRTIO_ACCEL_GET_PARENT_CLASS(obj) \
++        OBJECT_GET_PARENT_CLASS(obj, TYPE_VIRTIO_ACCEL)
++
++
++typedef struct VirtIOAccelConf {
++    AccelDevBackend *runtime;
++
++    /* Supported service mask */
++    uint32_t services;
++    /* Maximum size of each crypto request's content */
++    uint64_t max_size;
++} VirtIOAccelConf;
++
++struct VirtIOAccel;
++
++typedef struct VirtIOAccelReq {
++    /* elem should always be first */
++    VirtQueueElement elem;
++    
++    VirtQueue *vq;
++    /* flags of operation, such as type of algorithm */
++    uint32_t flags;
++
++    struct virtio_accel_hdr hdr;
++    struct VirtIOAccel *vaccel;
++    struct iovec *in_iov;
++    struct iovec *out_iov;
++    unsigned int in_niov;
++    unsigned int out_niov;
++    size_t in_iov_len;
++    AccelDevBackendOpInfo info;
++    uint32_t *in_status;
++} VirtIOAccelReq;
++
++typedef struct VirtIOAccelQueue {
++    VirtQueue *dataq;
++    QEMUBH *dataq_bh;
++    struct VirtIOAccel *vaccel;
++} VirtIOAccelQueue;
++
++typedef struct VirtIOAccel {
++    VirtIODevice parent_obj;
++
++    VirtIOAccelQueue *vqs;
++    VirtIOAccelConf conf;
++    AccelDevBackend *runtime;
++
++    uint32_t max_queues;
++    uint32_t status;
++
++    int multiqueue;
++    uint32_t curr_queue;
++    size_t config_size;
++} VirtIOAccel;
++
++#endif /* _QEMU_VIRTIO_ACCEL_H */
+Index: subprojects/vaccel/include/standard-headers/linux/virtio_accel.h
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/include/standard-headers/linux/virtio_accel.h b/subprojects/vaccel/include/standard-headers/linux/virtio_accel.h
+new file mode 100644
+--- /dev/null	(revision 5cb231f05f42e0861ed18c909830eab191338815)
++++ b/subprojects/vaccel/include/standard-headers/linux/virtio_accel.h	(revision 5cb231f05f42e0861ed18c909830eab191338815)
+@@ -0,0 +1,56 @@
++#ifndef _VIRTIO_ACCEL_H
++#define _VIRTIO_ACCEL_H
++
++#include "standard-headers/linux/types.h"
++#include "standard-headers/linux/virtio_types.h"
++
++#define VIRTIO_ID_ACCEL 21
++
++#define VIRTIO_ACCEL_S_HW_READY  (1 << 0)
++
++/* status */
++#define VIRTIO_ACCEL_OK        0
++#define VIRTIO_ACCEL_ERR       1
++#define VIRTIO_ACCEL_BADMSG    2
++#define VIRTIO_ACCEL_NOTSUPP   3
++#define VIRTIO_ACCEL_INVSESS   4 /* Invalid session id */
++
++struct virtio_accel_arg {
++    uint32_t len;
++    unsigned char *buf;
++    unsigned char *usr_buf;
++    unsigned char *usr_pages;
++    uint32_t usr_npages;
++    unsigned char padding[5];
++};
++
++struct virtio_accel_op {
++    uint32_t in_nr;
++    uint32_t out_nr;
++    struct virtio_accel_arg *in;
++    struct virtio_accel_arg *out;
++};
++
++struct virtio_accel_hdr {
++    uint32_t sess_id;
++
++#define VIRTIO_ACCEL_NO_OP                   0
++#define VIRTIO_ACCEL_CREATE_SESSION          1
++#define VIRTIO_ACCEL_DESTROY_SESSION         2
++#define VIRTIO_ACCEL_DO_OP                   3
++#define VIRTIO_ACCEL_GET_TIMERS              4
++    uint32_t op_type;
++
++    /* session create structs */
++    struct virtio_accel_op op;
++};
++
++struct virtio_accel_conf {
++    uint32_t status;
++    /* Supported service mask */
++    uint32_t services;
++    /* Maximum size of each crypto request's content */
++    uint64_t max_size;
++};
++
++#endif /* _VIRTIO_ACCEL_H */
+Index: subprojects/vaccel/include/sysemu/acceldev.h
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/include/sysemu/acceldev.h b/subprojects/vaccel/include/sysemu/acceldev.h
+new file mode 100644
+--- /dev/null	(revision 3c76708879e018b8ebefc9e7c6b1cfcf2c7901b6)
++++ b/subprojects/vaccel/include/sysemu/acceldev.h	(revision 3c76708879e018b8ebefc9e7c6b1cfcf2c7901b6)
+@@ -0,0 +1,293 @@
++#ifndef ACCELDEV_H
++#define ACCELDEV_H
++
++#include "qemu/queue.h"
++#include "qom/object.h"
++
++#define TYPE_ACCELDEV_BACKEND "acceldev-backend"
++
++OBJECT_DECLARE_TYPE(AccelDevBackend, AccelDevBackendClass,
++                    ACCELDEV_BACKEND)
++
++
++#define MAX_ACCEL_QUEUE_NUM  64
++
++typedef struct AccelDevBackendConf AccelDevBackendConf;
++typedef struct AccelDevBackendPeers AccelDevBackendPeers;
++typedef struct AccelDevBackendClient AccelDevBackendClient;
++typedef struct AccelDevBackend AccelDevBackend;
++
++typedef struct AccelDevBackendArg {
++    uint8_t *buf;
++    uint32_t len;
++} AccelDevBackendArg;
++
++typedef struct AccelDevBackendInfo {
++    uint32_t in_nr;
++    uint32_t out_nr;
++    AccelDevBackendArg *in;
++    AccelDevBackendArg *out;
++} AccelDevBackendInfo;
++
++typedef struct AccelDevBackendSessionInfo {
++    uint32_t op_type;
++    AccelDevBackendInfo op;
++} AccelDevBackendSessionInfo;
++
++typedef struct AccelDevBackendOpInfo {
++    uint32_t op_type;
++    int64_t sess_id;
++    AccelDevBackendInfo op;
++} AccelDevBackendOpInfo;
++
++
++typedef struct AccelDevBackendClass {
++    ObjectClass parent_class;
++
++    void (*init)(AccelDevBackend *ab, Error **errp);
++    void (*cleanup)(AccelDevBackend *ab, Error **errp);
++
++    int64_t (*create_session)(
++                 AccelDevBackend *ab,
++                 AccelDevBackendSessionInfo *sess_info,
++                 uint32_t queue_index, Error **errp);
++    int (*destroy_session)(
++                 AccelDevBackend *ab,
++                 int64_t sess_id,
++                 uint32_t queue_index, Error **errp);
++    int (*do_op)(
++                 AccelDevBackend *ab,
++                 AccelDevBackendOpInfo *op_info,
++                 uint32_t queue_index, Error **errp);
++    int (*timer_start)(
++                 AccelDevBackend *ab,
++                 int64_t sess_id,
++                 const char *name,
++                 uint32_t queue_index, Error **errp);
++    int (*timer_stop)(
++                 AccelDevBackend *ab,
++                 int64_t sess_id,
++                 const char *name,
++                 uint32_t queue_index, Error **errp);
++    int (*timers_get)(
++                 AccelDevBackend *ab,
++                 AccelDevBackendOpInfo *info,
++                 uint32_t queue_index, Error **errp);
++} AccelDevBackendClass;
++
++struct AccelDevBackendClient {
++    char *model;
++    char *name;
++    char *info_str;
++    unsigned int queue_index;
++    QTAILQ_ENTRY(AccelDevBackendClient) next;
++};
++
++struct AccelDevBackendPeers {
++    AccelDevBackendClient *ccs[MAX_ACCEL_QUEUE_NUM];
++    uint32_t queues;
++};
++
++struct AccelDevBackendConf {
++    AccelDevBackendPeers peers;
++
++    /* Supported service mask */
++    uint32_t services;
++    /* Maximum size of each accel request's content */
++    uint64_t max_size;
++};
++
++struct AccelDevBackend {
++    Object parent_obj;
++
++    bool ready;
++    /* Tag the acceldev backend is used by virtio-accel or not */
++    bool is_used;
++    AccelDevBackendConf conf;
++};
++
++/**
++ * acceldev_backend_new_client:
++ * @model: the acceldev backend model
++ * @name: the acceldev backend name, can be NULL
++ *
++ * Creates a new acceldev backend client object
++ * with the @name in the model @model.
++ *
++ * The returned object must be released with
++ * acceldev_backend_free_client() when no
++ * longer required
++ *
++ * Returns: a new acceldev backend client object
++ */
++AccelDevBackendClient *
++acceldev_backend_new_client(const char *model, const char *name);
++
++/**
++ * acceldev_backend_free_client:
++ * @c: the acceldev backend client object
++ *
++ * Release the memory associated with @cc that
++ * was previously allocated by acceldev_backend_new_client()
++ */
++void acceldev_backend_free_client(AccelDevBackendClient *c);
++
++/**
++ * acceldev_backend_cleanup:
++ * @ab: the acceldev backend object
++ * @errp: pointer to a NULL-initialized error object
++ *
++ * Clean the resouce associated with @backend that realizaed
++ * by the specific backend's init() callback
++ */
++void acceldev_backend_cleanup(
++           AccelDevBackend *ab,
++           Error **errp);
++
++/**
++ * acceldev_backend_create_session:
++ * @ab: the acceldev backend object
++ * @sess_info: parameters needed by session creating
++ * @queue_index: queue index of acceldev backend client
++ * @errp: pointer to a NULL-initialized error object
++ *
++ * Create an acceldev session
++ *
++ * Returns: session id on success,
++ *         or -VIRTIO_ACCEL_* on error
++ */
++int64_t acceldev_backend_create_session(
++           AccelDevBackend *ab,
++           AccelDevBackendSessionInfo *sess_info,
++           uint32_t queue_index, Error **errp);
++
++/**
++ * acceldev_backend_destroy_session:
++ * @ab: the acceldev backend object
++ * @sess_id: the session id
++ * @queue_index: queue index of acceldev backend client
++ * @errp: pointer to a NULL-initialized error object
++ *
++ * Close an acceldev session which was previously
++ * created by acceldev_backend_create_session()
++ *
++ * Returns: VIRTIO_ACCEL_OK on success,
++ *         or -VIRTIO_ACCEL_* on error
++ */
++int acceldev_backend_destroy_session(
++           AccelDevBackend *ab,
++           int64_t sess_id,
++           uint32_t queue_index, Error **errp);
++
++/**
++ * acceldev_backend_operation:
++ * @ab: the acceldev backend object
++ * @op_info: parameters needed to execute an operation 
++ * @queue_index: queue index of acceldev backend client
++ * @errp: pointer to a NULL-initialized error object
++ *
++ * Execute acceldev operation
++ *
++ * Returns: VIRTIO_ACCEL_OK on success,
++ *         or -VIRTIO_ACCEL_* on error
++ */
++int acceldev_backend_operation(
++                 AccelDevBackend *ab,
++                 AccelDevBackendOpInfo *op_info,
++                 uint32_t queue_index, Error **errp);
++
++/**
++ * acceldev_backend_timer_start:
++ * @ab: the acceldev backend object
++ * @sess_id: the session id
++ * @name: the timer name
++ * @queue_index: queue index of acceldev backend client
++ * @errp: pointer to a NULL-initialized error object
++ *
++ * Start an acceldev timer
++ *
++ * Returns: VIRTIO_ACCEL_OK on success,
++ *         or -VIRTIO_ACCEL_* on error
++ */
++int acceldev_backend_timer_start(
++                 AccelDevBackend *ab,
++                 int64_t sess_id,
++                 const char *name,
++                 uint32_t queue_index, Error **errp);
++
++/**
++ * acceldev_backend_timer_stop:
++ * @ab: the acceldev backend object
++ * @sess_id: the session id
++ * @name: the timer name
++ * @queue_index: queue index of acceldev backend client
++ * @errp: pointer to a NULL-initialized error object
++ *
++ * Stop an acceldev timer
++ *
++ * Returns: VIRTIO_ACCEL_OK on success,
++ *         or -VIRTIO_ACCEL_* on error
++ */
++int acceldev_backend_timer_stop(
++                 AccelDevBackend *ab,
++                 int64_t sess_id,
++                 const char *name,
++                 uint32_t queue_index, Error **errp);
++
++/**
++ * acceldev_backend_get_timers:
++ * @ab: the acceldev backend object
++ * @op_info: parameters needed to execute an operation 
++ * @queue_index: queue index of acceldev backend client
++ * @errp: pointer to a NULL-initialized error object
++ *
++ * Append acceldev timers to the request
++ *
++ * Returns: VIRTIO_ACCEL_OK on success,
++ *         or -VIRTIO_ACCEL_* on error
++ */
++int acceldev_backend_get_timers(
++                 AccelDevBackend *ab,
++                 AccelDevBackendOpInfo *op_info,
++                 uint32_t queue_index, Error **errp);
++
++/**
++ * acceldev_backend_set_used:
++ * @ab: the acceldev backend object
++ * @used: true or false
++ *
++ * Set if the acceldev backend is used by virtio-accel or not
++ */
++void acceldev_backend_set_used(AccelDevBackend *ab, bool used);
++
++/**
++ * acceldev_backend_is_used:
++ * @ab: the acceldev backend object
++ *
++ * Return if the acceldev backend is used
++ * by virtio-accel or not
++ *
++ * Returns: true on used, or false on not used
++ */
++bool acceldev_backend_is_used(AccelDevBackend *ab);
++
++/**
++ * acceldev_backend_set_ready:
++ * @ab: the acceldev backend object
++ * @ready: ture or false
++ *
++ * Set if the acceldev backend is ready or not
++ */
++void acceldev_backend_set_ready(AccelDevBackend *ab, bool ready);
++
++/**
++ * acceldev_backend_is_ready:
++ * @ab: the acceldev backend object
++ *
++ * Return if the acceldev backend is ready or not
++ *
++ * Returns: true on ready, or false on not ready
++ */
++bool acceldev_backend_is_ready(AccelDevBackend *ab);
++
++#endif /* ACCELDEV_H */
+Index: subprojects/vaccel/meson.build
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/meson.build b/subprojects/vaccel/meson.build
+new file mode 100644
+--- /dev/null	(revision 3c76708879e018b8ebefc9e7c6b1cfcf2c7901b6)
++++ b/subprojects/vaccel/meson.build	(revision 3c76708879e018b8ebefc9e7c6b1cfcf2c7901b6)
+@@ -0,0 +1,30 @@
++project('vaccel', 'c',
++        license: 'GPL-2.0-or-later',
++        default_options: ['c_std=gnu99'])
++
++cc = meson.get_compiler('c')
++ss = import('sourceset')
++
++keyval = import('keyval')
++config_host = keyval.load(meson.build_root() / 'config-host.mak')
++enable_static = 'CONFIG_STATIC' in config_host
++if enable_static
++  vaccel_lib = dependency('vaccel', static: true)
++else
++  vaccel_lib = dependency('vaccel')
++endif
++
++vaccel_virtio_ss = ss.source_set()
++vaccel_ss = ss.source_set()
++
++if vaccel_lib.found()
++  vaccel_virtio_ss.add([
++    files('hw/virtio/virtio-accel.c'),
++    files('hw/virtio/virtio-accel-pci.c')
++  ])
++  vaccel_ss.add([
++    vaccel_lib,
++    files('backends/acceldev.c'),
++    files('backends/acceldev-vaccel.c')
++  ])
++endif
+Index: subprojects/vaccel/meson_options.txt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/meson_options.txt b/subprojects/vaccel/meson_options.txt
+new file mode 100644
+--- /dev/null	(revision 6298eeb5f4f640bc2f287819bb4611e7a02d8409)
++++ b/subprojects/vaccel/meson_options.txt	(revision 6298eeb5f4f640bc2f287819bb4611e7a02d8409)
+@@ -0,0 +1,2 @@
++option('vaccel', type: 'feature', value: 'auto', yield: true,
++       description: 'vAccel support')
+Index: subprojects/vaccel/include/standard-headers/linux/accel.h
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/include/standard-headers/linux/accel.h b/subprojects/vaccel/include/standard-headers/linux/accel.h
+new file mode 100644
+--- /dev/null	(revision 5cb231f05f42e0861ed18c909830eab191338815)
++++ b/subprojects/vaccel/include/standard-headers/linux/accel.h	(revision 5cb231f05f42e0861ed18c909830eab191338815)
+@@ -0,0 +1,64 @@
++#ifndef _ACCEL_H
++#define _ACCEL_H
++
++#include "standard-headers/linux/types.h"
++
++#define TIMERS_NAME_MAX 64
++
++/* IOCTLs */
++#define VACCEL_SESS_CREATE      _IOWR('@', 0, struct accel_session)
++#define VACCEL_SESS_DESTROY     _IOWR('@', 1, struct accel_session)
++#define VACCEL_DO_OP            _IOWR('@', 2, struct accel_session)
++#define VACCEL_GET_TIMERS       _IOWR('@', 3, struct accel_session)
++
++
++struct accel_arg {
++	uint32_t len;
++	unsigned char *buf;
++};
++
++struct accel_op {
++	/* Number of in arguments */
++	uint32_t in_nr;
++
++	/* Pointer to in arguments */
++	struct accel_arg *in;
++
++	/* Number of out arguments */
++	uint32_t out_nr;
++
++	/* Pointer to out arguments */
++	struct accel_arg *out;
++};
++
++struct accel_session {
++	/* Session id */
++	uint32_t id;
++
++	/* Operation performed currently */
++	struct accel_op op;
++};
++
++struct accel_prof_sample {
++	/* Timestamp (nsec) of entering the region */
++	uint64_t start;
++
++	/* Time (nsec) elapsed inside the region */
++	uint64_t time;
++};
++
++struct accel_prof_region {
++	/* Name of the region */
++	char name[TIMERS_NAME_MAX];
++
++	/* Number of collected samples */
++	uint64_t nr_entries;
++
++	/* Array of collected samples */
++	struct accel_prof_sample *samples;
++
++	/* Allocated size for the array */
++	uint64_t size;
++};
++
++#endif /* _ACCEL_H */
+Index: subprojects/vaccel/backends/acceldev-vaccel.c
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/backends/acceldev-vaccel.c b/subprojects/vaccel/backends/acceldev-vaccel.c
+new file mode 100644
+--- /dev/null	(revision 3c76708879e018b8ebefc9e7c6b1cfcf2c7901b6)
++++ b/subprojects/vaccel/backends/acceldev-vaccel.c	(revision 3c76708879e018b8ebefc9e7c6b1cfcf2c7901b6)
+@@ -0,0 +1,529 @@
++#include "qemu/osdep.h"
++#include "../include/sysemu/acceldev.h"
++#include "qapi/error.h"
++#include "../include/standard-headers/linux/virtio_accel.h"
++#include "../include/standard-headers/linux/accel.h"
++#include "qom/object.h"
++#include <vaccel.h>
++
++
++/**
++ * @TYPE_ACCELDEV_BACKEND_VACCELRT:
++ */
++#define TYPE_ACCELDEV_BACKEND_VACCELRT "acceldev-backend-vaccel"
++
++OBJECT_DECLARE_SIMPLE_TYPE(AccelDevBackendVaccelRT, ACCELDEV_BACKEND_VACCELRT)
++
++typedef struct AccelDevBackendVaccelRTTimer {
++    struct vaccel_prof_region vaccel_tmr;
++    const char *name;
++    QTAILQ_ENTRY(AccelDevBackendVaccelRTTimer) next;
++} AccelDevBackendVaccelRTTimer;
++
++typedef struct AccelDevBackendVaccelRTSession {
++    void *opaque;
++    int64_t id;
++    QTAILQ_HEAD(, AccelDevBackendVaccelRTTimer) timers;
++    uint32_t nr_timers;
++    QTAILQ_ENTRY(AccelDevBackendVaccelRTSession) next;
++} AccelDevBackendVaccelRTSession;
++
++/* Max number of sessions */
++#define MAX_NUM_SESSIONS 1024
++
++struct AccelDevBackendVaccelRT {
++    AccelDevBackend parent_obj;
++    QTAILQ_HEAD(, AccelDevBackendVaccelRTSession) sessions;
++};
++
++static AccelDevBackendVaccelRTTimer *timer_get(
++                AccelDevBackendVaccelRTSession *sess,
++                const char *name)
++{
++    if (!vaccel_prof_enabled())
++        return NULL;
++
++    AccelDevBackendVaccelRTTimer *timer, *tmp;
++    QTAILQ_FOREACH_SAFE(timer, &sess->timers, next, tmp) {
++        if (strcmp(timer->name, name) == 0) {
++            return timer;
++        }
++    }
++    return NULL;
++}
++
++static void timers_del(AccelDevBackendVaccelRTSession *sess)
++{
++    if (!vaccel_prof_enabled())
++        return;
++
++    AccelDevBackendVaccelRTTimer *timer, *tmp;
++    QTAILQ_FOREACH_SAFE(timer, &sess->timers, next, tmp) {
++        QTAILQ_REMOVE(&sess->timers, timer, next);
++        vaccel_prof_region_release(&timer->vaccel_tmr);
++        g_free(timer);
++    }
++}
++
++static void acceldev_vaccel_init(
++             AccelDevBackend *ab, Error **errp)
++{
++    /* Only support one queue */
++    int queues = ab->conf.peers.queues;
++    AccelDevBackendClient *c;
++
++    if (queues != 1) {
++        error_setg(errp,
++                  "Only support one queue in acceldev-vaccel backend");
++        return;
++    }
++
++    c = acceldev_backend_new_client("acceldev-vaccel", NULL);
++    c->info_str = g_strdup_printf("acceldev-vaccel0");
++    c->queue_index = 0;
++    ab->conf.peers.ccs[0] = c;
++
++    // TODO
++    //ab->conf.services = 1u << VIRTIO_ACCEL_SERVICE_VACCELRT;
++    //
++    ab->conf.max_size = LONG_MAX - sizeof(AccelDevBackendOpInfo);
++
++    acceldev_backend_set_ready(ab, true);
++
++    AccelDevBackendVaccelRT *vaccel = ACCELDEV_BACKEND_VACCELRT(ab);
++    QTAILQ_INIT(&vaccel->sessions);
++}
++
++static AccelDevBackendVaccelRTSession *session_get(
++                 AccelDevBackendVaccelRT *vaccel,
++                 int64_t sess_id)
++{
++    AccelDevBackendVaccelRTSession *sess, *tmp;
++    QTAILQ_FOREACH_SAFE(sess, &vaccel->sessions, next, tmp) {
++        if (sess->id == sess_id) {
++            return sess;
++        }
++    }
++    return NULL;
++}
++
++static AccelDevBackendVaccelRTSession *session_create_and_add(
++                AccelDevBackendVaccelRT *vaccel,
++                void *sess_data,
++                int64_t sess_id)
++{
++    AccelDevBackendVaccelRTSession *sess =
++        g_new0(AccelDevBackendVaccelRTSession, 1);
++    sess->opaque = sess_data;
++    sess->id = sess_id;
++    QTAILQ_INIT(&sess->timers);
++    sess->nr_timers = 0;
++    QTAILQ_INSERT_TAIL(&vaccel->sessions, sess, next);
++
++    return sess;
++}
++
++static void session_del(
++                AccelDevBackendVaccelRT *vaccel,
++                AccelDevBackendVaccelRTSession *sess)
++{
++    QTAILQ_REMOVE(&vaccel->sessions, sess, next);
++    g_free(sess->opaque);
++    g_free(sess);
++}
++
++static int64_t acceldev_vaccel_create_session(
++           AccelDevBackend *ab,
++           AccelDevBackendSessionInfo *info,
++           uint32_t queue_index, Error **errp)
++{
++    AccelDevBackendVaccelRT *vaccel = ACCELDEV_BACKEND_VACCELRT(ab);
++    struct vaccel_session *sess_data = NULL;
++    AccelDevBackendVaccelRTSession *sess;
++    int ret;
++
++    sess_data = g_new0(struct vaccel_session, 1);
++
++    ret = vaccel_session_init(sess_data, 0);
++    if (ret != VACCEL_OK)
++        return -VIRTIO_ACCEL_ERR;
++
++    sess = session_create_and_add(vaccel, (void *)sess_data,
++                                  sess_data->id);
++
++    return sess->id;
++}
++
++static int acceldev_vaccel_destroy_session(
++           AccelDevBackend *ab,
++           int64_t sess_id,
++           uint32_t queue_index, Error **errp)
++{
++    AccelDevBackendVaccelRT *vaccel = ACCELDEV_BACKEND_VACCELRT(ab);
++    AccelDevBackendVaccelRTSession *sess;
++    int ret;
++
++    sess = session_get(vaccel, sess_id);
++    if (!sess) {
++        error_setg(errp, "Cannot find a valid session with id: %" PRId64 "",
++                   sess_id);
++        return -VIRTIO_ACCEL_INVSESS;
++    }
++
++    ret = vaccel_session_release((struct vaccel_session *)sess->opaque);
++    if (ret != VACCEL_OK)
++        return -VIRTIO_ACCEL_ERR;
++
++    timers_del(sess);
++    session_del(vaccel, sess);
++
++    return VIRTIO_ACCEL_OK;
++}
++
++static int do_operation(
++                struct vaccel_session *sess,
++                AccelDevBackendOpInfo *info,
++                AccelDevBackend *ab,
++                uint32_t queue_index, Error **errp)
++{
++    AccelDevBackendArg *in_args = info->op.in;
++    AccelDevBackendArg *out_args = info->op.out;
++    struct vaccel_arg *req_inargs = NULL, *req_outargs = NULL;
++    int ret;
++
++    acceldev_backend_timer_start(ab, sess->id, "do op > prepare",
++                                 queue_index, errp);
++
++    if (info->op.out_nr > 0) {
++        req_outargs = g_new0(struct vaccel_arg, info->op.out_nr);
++        for (int i = 0; i < info->op.out_nr; i++) {
++            req_outargs[i].buf = out_args[i].buf;
++            req_outargs[i].size = out_args[i].len;
++        }
++    }
++
++    if (info->op.in_nr > 0) {
++        req_inargs = g_new0(struct vaccel_arg, info->op.in_nr);
++        for (int i = 0; i < info->op.in_nr; i++) {
++            req_inargs[i].buf = in_args[i].buf;
++            req_inargs[i].size = in_args[i].len;
++        }
++    }
++
++    acceldev_backend_timer_stop(ab, sess->id, "do op > prepare",
++                                queue_index, errp);
++
++    acceldev_backend_timer_start(ab, sess->id, "do op > genop",
++                                 queue_index, errp);
++
++    ret = vaccel_genop(sess, req_outargs, info->op.out_nr,
++                       req_inargs, info->op.in_nr);
++
++    if (ret != VACCEL_OK)
++        ret = -VIRTIO_ACCEL_ERR;
++    else
++        ret = VIRTIO_ACCEL_OK;
++
++    acceldev_backend_timer_stop(ab, sess->id, "do op > genop",
++                                queue_index, errp);
++
++    acceldev_backend_timer_start(ab, sess->id, "do op > free prep",
++                                 queue_index, errp);
++
++    if (req_outargs)
++        g_free(req_outargs);
++    if (req_inargs)
++        g_free(req_inargs);
++
++    acceldev_backend_timer_stop(ab, sess->id, "do op > free prep",
++                                queue_index, errp);
++
++    return ret;
++}
++
++static int acceldev_vaccel_operation(
++                 AccelDevBackend *ab,
++                 AccelDevBackendOpInfo *info,
++                 uint32_t queue_index, Error **errp)
++{
++    AccelDevBackendVaccelRT *vaccel = ACCELDEV_BACKEND_VACCELRT(ab);
++    AccelDevBackendVaccelRTSession *sess;
++    int ret;
++
++    sess = session_get(vaccel, info->sess_id);
++    if (!sess) {
++        error_setg(errp, "Cannot find a valid session with id: %" PRId64 "",
++                   info->sess_id);
++        return -VIRTIO_ACCEL_INVSESS;
++    }
++
++    if (info->op.out_nr < 1) {
++        error_setg(errp, "vAccel op requires at least 1 out argument (got %u)",
++                info->op.out_nr);
++        return -VIRTIO_ACCEL_ERR;
++    }
++
++    ret = do_operation(sess->opaque, info, ab, queue_index, errp);
++
++    if (ret != VACCEL_OK)
++        return -VIRTIO_ACCEL_ERR;
++
++    return VIRTIO_ACCEL_OK;
++}
++
++static int acceldev_vaccel_timer_start(
++           AccelDevBackend *ab,
++           int64_t sess_id,
++           const char *name,
++           uint32_t queue_index, Error **errp)
++{
++    if (!vaccel_prof_enabled())
++        return VIRTIO_ACCEL_OK;
++
++    AccelDevBackendVaccelRT *vaccel = ACCELDEV_BACKEND_VACCELRT(ab);
++    AccelDevBackendVaccelRTSession *sess;
++    int ret;
++
++    sess = session_get(vaccel, sess_id);
++    if (!sess) {
++        return -VIRTIO_ACCEL_INVSESS;
++    }
++
++    AccelDevBackendVaccelRTTimer *timer = timer_get(sess, name);
++    if (!timer) {
++        timer = g_new0(AccelDevBackendVaccelRTTimer, 1);
++        ret = vaccel_prof_region_init(&timer->vaccel_tmr, name);
++        if (ret != VACCEL_OK) {
++            g_free(timer);
++            return -VIRTIO_ACCEL_ERR;
++        }
++        timer->name = timer->vaccel_tmr.name;
++
++        QTAILQ_INSERT_TAIL(&sess->timers, timer, next);
++        sess->nr_timers++;
++    }
++    vaccel_prof_region_start(&timer->vaccel_tmr);
++
++    return VIRTIO_ACCEL_OK;
++}
++
++static int acceldev_vaccel_timer_stop(
++           AccelDevBackend *ab,
++           int64_t sess_id,
++           const char *name,
++           uint32_t queue_index, Error **errp)
++{
++    if (!vaccel_prof_enabled())
++        return VIRTIO_ACCEL_OK;
++
++    AccelDevBackendVaccelRT *vaccel = ACCELDEV_BACKEND_VACCELRT(ab);
++    AccelDevBackendVaccelRTSession *sess;
++
++    sess = session_get(vaccel, sess_id);
++    if (!sess) {
++        return -VIRTIO_ACCEL_INVSESS;
++    }
++
++    AccelDevBackendVaccelRTTimer *timer = timer_get(sess, name);
++    if (!timer) {
++        return VIRTIO_ACCEL_OK;
++    }
++
++    vaccel_prof_region_stop(&timer->vaccel_tmr);
++
++    return VIRTIO_ACCEL_OK;
++}
++
++static int timer_sample_acceldev_to_accel(
++                struct accel_prof_sample *accel_samples,
++                uint32_t nr_accel_samples,
++                AccelDevBackendVaccelRTTimer *timer)
++{
++    int i = 0;
++
++    for (i = 0; i < timer->vaccel_tmr.nr_entries; i++) {
++        if (i == nr_accel_samples) {
++            fprintf(stderr,
++                    "not all acceldev samples for %s can be returned (allocated: %d vs total: %ld)",
++                    timer->name, nr_accel_samples,
++                    timer->vaccel_tmr.nr_entries);
++            break;
++        }
++        accel_samples[i].start = timer->vaccel_tmr.samples[i].start;
++        accel_samples[i].time = timer->vaccel_tmr.samples[i].time;
++    }
++
++    return i;
++}
++
++#define TIMERS_NAME_PREFIX "[qemu-vaccel]"
++static int timers_acceldev_to_accel(
++                struct accel_prof_region *accel_timers,
++                uint32_t nr_accel_timers,
++                AccelDevBackendVaccelRTSession *sess)
++{
++    if (nr_accel_timers < 1)
++        return -VIRTIO_ACCEL_ERR;
++
++    int i = 0;
++    AccelDevBackendVaccelRTTimer *timer, *tmp;
++    QTAILQ_FOREACH_SAFE(timer, &sess->timers, next, tmp) {
++        if (i == nr_accel_timers) {
++            fprintf(stderr,
++                    "not all acceldev timers can be returned (allocated: %d vs total: %d)",
++                    nr_accel_timers, sess->nr_timers);
++            break;
++        }
++        g_snprintf(accel_timers[i].name, TIMERS_NAME_MAX, "%s %s",
++                TIMERS_NAME_PREFIX, timer->name);
++        accel_timers[i].nr_entries =
++            timer_sample_acceldev_to_accel(accel_timers[i].samples,
++                accel_timers[i].size, timer);
++        i++;
++    }
++
++    return i;
++}
++
++static int acceldev_vaccel_get_timers(
++                 AccelDevBackend *ab,
++                 AccelDevBackendOpInfo *info,
++                 uint32_t queue_index, Error **errp)
++{
++    if (!vaccel_prof_enabled())
++        return VIRTIO_ACCEL_OK;
++
++    AccelDevBackendVaccelRT *vaccel = ACCELDEV_BACKEND_VACCELRT(ab);
++    AccelDevBackendVaccelRTSession *sess;
++    int ret;
++
++    sess = session_get(vaccel, info->sess_id);
++    if (!sess) {
++        error_setg(errp, "Cannot find a valid session with id: %" PRId64 "",
++                   info->sess_id);
++        return -VIRTIO_ACCEL_INVSESS;
++    }
++
++    if (info->op.in_nr < 1) {
++        error_setg(errp,
++                "vaccel get_timers requires at least 1 in argument (got %u)",
++                info->op.out_nr);
++        return -VIRTIO_ACCEL_ERR;
++    }
++
++    uint32_t *nt = (uint32_t *)info->op.in[0].buf;
++    uint32_t *qnt = (uint32_t *)info->op.in[1].buf;
++    if (*qnt == 0) {
++        *qnt = sess->nr_timers;
++        ret = VIRTIO_ACCEL_OK;
++    } else {
++        uint64_t nr_timers = *nt + *qnt;
++
++        if (info->op.in_nr < 3 + nr_timers) {
++            error_setg(errp,
++                    "vaccel get_timers: not enough in arguments (got %u)",
++                    info->op.in_nr);
++            return -VIRTIO_ACCEL_ERR;
++        }
++
++        struct accel_prof_region *accel_timers =
++            (struct accel_prof_region *)info->op.in[2].buf;
++        if (info->op.in[2].len < nr_timers * sizeof(*accel_timers)) {
++            error_setg(errp,
++                    "vaccel get_timers: wrong preallocated size (got %d)",
++                    info->op.in[2].len);
++            return -VIRTIO_ACCEL_ERR;
++        }
++
++        struct accel_prof_sample **tmp_samples =
++            g_new0(struct accel_prof_sample *, *qnt);
++        if (!tmp_samples) {
++            return -VIRTIO_ACCEL_ERR;
++        }
++
++        for (int i = *nt; i < nr_timers; i++) {
++            tmp_samples[i - *nt] = accel_timers[i].samples;
++            accel_timers[i].samples =
++                (struct accel_prof_sample *)info->op.in[3 + i].buf;
++        }
++
++        ret = timers_acceldev_to_accel(&accel_timers[*nt], *qnt, sess);
++        if (ret < 0) {
++            ret = -VIRTIO_ACCEL_ERR;
++            goto free;
++        } else {
++            ret = VIRTIO_ACCEL_OK;
++        }
++
++        for (int i = *nt; i < nr_timers; i++) {
++            accel_timers[i].samples = tmp_samples[i - *nt];
++        }
++
++free:
++        g_free(tmp_samples);
++    }
++
++    return ret;
++}
++
++static void sessions_del(
++                AccelDevBackendVaccelRT *vaccel,
++                AccelDevBackend *ab,
++                Error **errp)
++{
++    AccelDevBackendVaccelRTSession *sess, *tmp;
++    QTAILQ_FOREACH_SAFE(sess, &vaccel->sessions, next, tmp) {
++        acceldev_vaccel_destroy_session(ab, sess->id, 0, errp);
++    }
++}
++
++static void acceldev_vaccel_cleanup(
++             AccelDevBackend *ab,
++             Error **errp)
++{
++    AccelDevBackendVaccelRT *vaccel = ACCELDEV_BACKEND_VACCELRT(ab);
++    int queues = ab->conf.peers.queues;
++    AccelDevBackendClient *c;
++
++    sessions_del(vaccel, ab, errp);
++
++    for (int i = 0; i < queues; i++) {
++        c = ab->conf.peers.ccs[i];
++        if (c) {
++            acceldev_backend_free_client(c);
++            ab->conf.peers.ccs[i] = NULL;
++        }
++    }
++
++    acceldev_backend_set_ready(ab, false);
++}
++
++static void
++acceldev_vaccel_class_init(ObjectClass *oc, void *data)
++{
++    AccelDevBackendClass *abc = ACCELDEV_BACKEND_CLASS(oc);
++
++    abc->init = acceldev_vaccel_init;
++    abc->cleanup = acceldev_vaccel_cleanup;
++    abc->create_session = acceldev_vaccel_create_session;
++    abc->destroy_session = acceldev_vaccel_destroy_session;
++    abc->do_op = acceldev_vaccel_operation;
++    abc->timer_start = acceldev_vaccel_timer_start;
++    abc->timer_stop = acceldev_vaccel_timer_stop;
++    abc->timers_get = acceldev_vaccel_get_timers;
++}
++
++static const TypeInfo acceldev_vaccel_info = {
++    .name = TYPE_ACCELDEV_BACKEND_VACCELRT,
++    .parent = TYPE_ACCELDEV_BACKEND,
++    .class_init = acceldev_vaccel_class_init,
++    .instance_size = sizeof(AccelDevBackendVaccelRT),
++};
++
++static void
++acceldev_vaccel_register_types(void)
++{
++    type_register_static(&acceldev_vaccel_info);
++}
++
++type_init(acceldev_vaccel_register_types);
+Index: .github/workflows/vaccel-build-and-upload.yml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.github/workflows/vaccel-build-and-upload.yml b/.github/workflows/vaccel-build-and-upload.yml
+new file mode 100644
+--- /dev/null	(revision 1812f78584953ee177cdbbd5944c4860be25bfff)
++++ b/.github/workflows/vaccel-build-and-upload.yml	(revision 1812f78584953ee177cdbbd5944c4860be25bfff)
+@@ -0,0 +1,172 @@
++name: Build QEMU+vAccel docker image
++
++on:
++  push:
++    branches: [ '*\+vaccel' ]
++
++  workflow_dispatch:
++    inputs:
++      registry:
++        default: 'harbor.nbfc.io'
++        required: false
++
++concurrency:
++  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
++  cancel-in-progress: true
++
++env:
++  REGISTRY: ${{ github.event.inputs.registry || 'harbor.nbfc.io' }}
++  # NOTE: We assume that a project named after the repo owner exists in the
++  # registry. The image will be uploaded as <repo_name> under the <repo_owner>
++  # project.
++  REGISTRY_IMAGE: ${{ github.event.inputs.registry || 'harbor.nbfc.io' }}/${{ github.repository }}
++  RUNNER_ARCH_MAP: '[{"amd64":"x86_64", "arm64":"aarch64", "arm":"armv7l"}]'
++
++jobs:
++  build:
++    name: Build Docker Image
++    runs-on: ${{ format('{0}-{1}', 'base-dind-2204', matrix.arch) }}
++    strategy:
++      matrix:
++        arch: ["arm64", "amd64"]
++    outputs:
++      digest-amd64: ${{ steps.set-outputs.outputs.digest-amd64 }}
++      digest-arm64: ${{ steps.set-outputs.outputs.digest-arm64 }}
++
++    steps:
++      - name: Checkout repo
++        uses: actions/checkout@v4
++
++      - name: Login to registry ${{ env.REGISTRY }}
++        uses: docker/login-action@v3
++        with:
++          registry: ${{ env.REGISTRY }}
++          username: ${{ secrets.HARBOR_USER }}
++          password: ${{ secrets.HARBOR_SECRET }}
++
++      - name: Set up Docker Buildx
++        uses: docker/setup-buildx-action@v3
++
++      - name: Extract Docker metadata
++        id: meta
++        uses: docker/metadata-action@v5
++        with:
++          images: ${{ env.REGISTRY_IMAGE }}
++          tags: |
++            type=sha,prefix=${{ matrix.arch }}-
++            type=ref,event=branch,prefix=${{ matrix.arch }}-
++
++      - name: Build and push ${{ matrix.arch }} image
++        id: build-and-push
++        uses: docker/build-push-action@v6
++        with:
++          context: ./subprojects/vaccel/docker
++          tags: ${{ steps.meta.outputs.tags }}
++          labels: ${{ steps.meta.outputs.labels }}
++          platforms: linux/${{ matrix.arch }}
++          push: true
++          provenance: false
++          build-args: |
++            ARCHTAG=${{ fromJson(env.RUNNER_ARCH_MAP)[0][matrix.arch] }}
++            BRANCH=${{ github.event.ref_name || github.ref_name }}
++
++      - name: Set ${{ matrix.arch }} digest output
++        id: set-outputs
++        run: |
++          # Workaround for https://github.com/actions/runner/issues/2499
++          echo "digest-${{ matrix.arch }}=${{ steps.build-and-push.outputs.digest }}" \
++            >> "$GITHUB_OUTPUT"
++        shell: bash
++
++  create-manifest:
++    name: Create Merged Docker Image Manifest
++    needs: [build]
++    runs-on: 'base-dind-2204-amd64'
++    outputs:
++      digest-merged: ${{ steps.inspect.outputs.digest-merged }}
++
++    steps:
++      - name: Checkout repo
++        uses: actions/checkout@v4
++
++      - name: Login to registry ${{ inputs.REGISTRY }}
++        uses: docker/login-action@v3
++        with:
++          registry: ${{ env.REGISTRY }}
++          username: ${{ secrets.HARBOR_USER }}
++          password: ${{ secrets.HARBOR_SECRET }}
++
++      - name: Set up Docker Buildx
++        uses: docker/setup-buildx-action@v3
++
++      - name: Extract Docker metadata
++        id: meta
++        uses: docker/metadata-action@v5
++        with:
++          images: ${{ env.REGISTRY_IMAGE }}
++          tags: |
++            type=sha
++            type=ref,event=branch
++            type=raw,value=latest
++
++      - name: Create and push manifest
++        run: |
++          docker buildx imagetools create \
++          $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< \
++            "$DOCKER_METADATA_OUTPUT_JSON") \
++            ${{ env.REGISTRY_IMAGE }}@${{ needs.build.outputs.digest-amd64 }} \
++            ${{ env.REGISTRY_IMAGE }}@${{ needs.build.outputs.digest-arm64 }}
++        shell: bash
++
++      - name: Inspect merged image
++        id: inspect
++        run: |
++          docker buildx imagetools inspect \
++            ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}
++          digest=$(docker buildx imagetools inspect \
++            ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }} \
++            --format '{{json .Manifest}}' | jq -r '.digest')
++          if [[ -z "${digest}" ]]; then
++            echo "Could not get merged image digest"
++            exit 1
++          fi
++          echo "digest-merged=${digest}" >> "$GITHUB_OUTPUT"
++        shell: bash
++
++  sign:
++    name: Sign Docker Images
++    needs: [build, create-manifest]
++    runs-on: 'base-dind-2204-amd64'
++    permissions:
++      contents: read
++      id-token: write
++
++    steps:
++      - name: Install Cosign
++        uses: sigstore/cosign-installer@v3
++
++      - name: Verify Cosign installation
++        run: cosign version
++
++      - name: Login to registry ${{ env.REGISTRY }}
++        uses: docker/login-action@v3
++        with:
++          registry: ${{ env.REGISTRY }}
++          username: ${{ secrets.HARBOR_USER }}
++          password: ${{ secrets.HARBOR_SECRET }}
++
++      - name: Sign published Docker images
++        env:
++          DIGESTS: >-
++            ${{ needs.create-manifest.outputs.digest-merged }}
++            ${{ needs.build.outputs.digest-amd64 }}
++            ${{ needs.build.outputs.digest-arm64 }}
++        run: |
++          for digest in ${DIGESTS}; do
++            cosign sign --yes ${{ env.REGISTRY_IMAGE }}@${digest} \
++              -a "repo=${{ github.repository }}" \
++              -a "workflow=${{ github.workflow }}" \
++              -a "ref=${{ github.sha }}" \
++              -a "author=Nubificus LTD"
++          done
++        shell: bash
+Index: subprojects/vaccel/.gitignore
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/.gitignore b/subprojects/vaccel/.gitignore
+new file mode 100644
+--- /dev/null	(revision 41ec9c4ac832fb8f8dc9771ce1e4fb1ce286ffae)
++++ b/subprojects/vaccel/.gitignore	(revision 41ec9c4ac832fb8f8dc9771ce1e4fb1ce286ffae)
+@@ -0,0 +1,1 @@
++!*.patch
+Index: subprojects/vaccel/docker/Dockerfile
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/docker/Dockerfile b/subprojects/vaccel/docker/Dockerfile
+new file mode 100644
+--- /dev/null	(revision 41ec9c4ac832fb8f8dc9771ce1e4fb1ce286ffae)
++++ b/subprojects/vaccel/docker/Dockerfile	(revision 41ec9c4ac832fb8f8dc9771ce1e4fb1ce286ffae)
+@@ -0,0 +1,66 @@
++FROM ubuntu:24.04
++
++WORKDIR /
++
++# Install common build utilities
++RUN apt-get update && \
++    DEBIAN_FRONTEND=noninteractive apt-get install -yy eatmydata && \
++    DEBIAN_FRONTEND=noninteractive eatmydata \
++    apt-get install -y --no-install-recommends \
++        gcc \
++        g++ \
++        build-essential \
++        libglib2.0-dev \
++        libfdt-dev \
++        libpixman-1-dev \
++        libslirp-dev \
++        zlib1g-dev \
++        libcap-ng-dev \
++        libattr1-dev \
++        ninja-build \
++        libcurl4-openssl-dev \
++        libstb-dev \
++        git \
++        python3-pip \
++        libclang-dev \
++        pkg-config \
++        iproute2 \
++        openssh-client \
++        iputils-ping \
++        socat \
++        vim \
++        less \
++        ca-certificates \
++    && rm -rf /var/lib/apt/lists/* \
++    && pip install --break-system-packages meson
++
++# Build & install vAccel
++RUN git clone https://github.com/nubificus/vaccel && \
++    cd vaccel && \
++    meson setup -Dplugins=enabled -Dexamples=enabled build && \
++    meson compile -C build && \
++    meson install -C build && \
++    ldconfig && \
++    cd .. && rm -rf vaccel
++
++ARG BRANCH=master+vaccel
++ARG ARCHTAG=x86_64
++ARG DOCKER_DIR=.
++COPY ${DOCKER_DIR}/vq-size.patch /vq-size.patch
++# Build & install QEMU w/ vAccel backend
++RUN git clone -b ${BRANCH} --depth 1 \
++    https://github.com/cloudkernels/qemu-vaccel && \
++    cd qemu-vaccel && \
++    mv /vq-size.patch . && \
++    git apply vq-size.patch && \
++    mkdir build && cd build && \
++    ../configure --target-list=${ARCHTAG}-softmmu --enable-virtfs && \
++    make -j$(nproc) && make install && \
++    cd ../.. && rm -rf qemu-vaccel
++
++COPY ${DOCKER_DIR}/qemu-ifup /usr/local/etc/qemu-ifup
++COPY ${DOCKER_DIR}/qemu-script.sh /run.sh
++
++VOLUME /data
++WORKDIR /data
++ENTRYPOINT ["/run.sh"]
+Index: subprojects/vaccel/docker/qemu-ifup
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/docker/qemu-ifup b/subprojects/vaccel/docker/qemu-ifup
+new file mode 100755
+--- /dev/null	(revision 41ec9c4ac832fb8f8dc9771ce1e4fb1ce286ffae)
++++ b/subprojects/vaccel/docker/qemu-ifup	(revision 41ec9c4ac832fb8f8dc9771ce1e4fb1ce286ffae)
+@@ -0,0 +1,38 @@
++#! /bin/sh
++# Script to bring a network (tap) device for qemu up.
++# The idea is to add the tap device to the same bridge
++# as we have default routing to.
++
++# in order to be able to find brctl
++PATH=$PATH:/sbin:/usr/sbin
++ip=$(which ip)
++
++if [ -n "$ip" ]; then
++   ip link set "$1" up
++else
++   brctl=$(which brctl)
++   if [ ! "$ip" -o ! "$brctl" ]; then
++     echo "W: $0: not doing any bridge processing: neither ip nor brctl utility not found" >&2
++     exit 0
++   fi
++   ifconfig "$1" 0.0.0.0 up
++fi
++
++switch=virbr0
++
++# only add the interface to default-route bridge if we
++# have such interface (with default route) and if that
++# interface is actually a bridge.
++# It is possible to have several default routes too
++for br in $switch; do
++    if [ -d /sys/class/net/$br/bridge/. ]; then
++        if [ -n "$ip" ]; then
++          ip link set "$1" master "$br"
++        else
++          brctl addif $br "$1"
++        fi
++        exit	# exit with status of the previous command
++    fi
++done
++
++echo "W: $0: no bridge for guest interface found" >&2
+Index: subprojects/vaccel/docker/qemu-script.sh
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/docker/qemu-script.sh b/subprojects/vaccel/docker/qemu-script.sh
+new file mode 100755
+--- /dev/null	(revision 41ec9c4ac832fb8f8dc9771ce1e4fb1ce286ffae)
++++ b/subprojects/vaccel/docker/qemu-script.sh	(revision 41ec9c4ac832fb8f8dc9771ce1e4fb1ce286ffae)
+@@ -0,0 +1,301 @@
++#!/bin/bash
++
++set -e
++
++export LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
++export QEMU_AUDIO_DRV=none
++export VACCEL_PLUGINS=${VACCEL_PLUGINS:=libvaccel-noop.so}
++export VACCEL_LOG_LEVEL=${VACCEL_LOG_LEVEL:=4}
++
++SCRIPT_NAME=$(basename "$0")
++RUN_PATH=./run
++SSH_HOST=localhost
++SSH_PORT_LOCAL=60022
++SSH_PORT_VM=22
++
++smp=1
++cpu=host
++ram=512
++
++machine=pc,accel=kvm
++device=pci
++kernel=bzImage
++rootfs=rootfs.img
++cmdline='rw root=/dev/vda console=ttyS0 '
++dcache=none
++stderr=${RUN_PATH}/stderr.log
++
++timeout=300
++
++log_error() {
++    local error=${1:-'Unknown error'}
++    local code=${2:-1}
++    echo "${SCRIPT_NAME}: ${error} [error ${code}]" >&2
++}
++
++error() {
++    local code=${2:-1}
++    log_error "$1" "${code}"
++    exit "${code}"
++}
++
++cleanup_log_file() {
++    [[ -n "$1" ]] && [[ -z "$(cat "$1")" ]] && rm -f "$1" || true
++}
++
++print_log_file() {
++    [[ -f "$1" ]] && echo "${1}:" && cat "$1" || true
++}
++
++parse_args() {
++    short_opts=M:m:r:k:s:n::v::c:t:
++    read -r -d '' long_opts <<-EOF || true
++	machine:,cpu:,dtb:,
++	vcpus:,ram:,rootfs:,kernel:,cmdline-append:,output-socket:,
++	net-tap::,vsock::,cmd:,timeout:,no-pci,no-kvm,drive-cache,skip-fsck
++	EOF
++
++    if ! getopt=$(getopt -o "${short_opts}" --long "${long_opts}" \
++        -n "${SCRIPT_NAME}" -- "$@"); then
++        echo 'Failed to parse args' >&2
++        exit 1
++    fi
++
++    eval set -- "$getopt"
++    unset "$getopt"
++
++    while true; do
++        case "$1" in
++        '-M' | '--machine')
++            # QEMU Machine
++            [[ -z "$2" ]] && error "'$1' requires a non-empty string"
++            machine="$2"
++            shift 2
++            ;;
++        '--cpu')
++            # QEMU CPU
++            [[ -z "$2" ]] && error "'$1' requires a non-empty string"
++            cpu="$2"
++            shift 2
++            ;;
++        '--dtb')
++            # QEMU CPU
++            [[ -z "$2" ]] && error "'$1' requires a non-empty string"
++            dtb="$2"
++            extra_args+="-dtb ${dtb} "
++            shift 2
++            ;;
++        '--vcpus')
++            # VM vCPUs
++            [[ -z "$2" ]] && error "'$1' requires a non-empty string"
++            smp="$2"
++            shift 2
++            ;;
++        '-m' | '--memory')
++            # VM RAM
++            [[ -z "$2" ]] && error "'$1' requires a non-empty string"
++            ram="$2"
++            shift 2
++            ;;
++        '-r' | '--rootfs')
++            # VM rootfs
++            [[ -z "$2" ]] && error "'$1' requires a non-empty string"
++            rootfs="$2"
++            shift 2
++            ;;
++        '-k' | '--kernel')
++            # VM kernel
++            [[ -z "$2" ]] && error "'$1' requires a non-empty string"
++            kernel="$2"
++            shift 2
++            ;;
++        '--cmdline-append')
++            # VM kernel command line append
++            cmdline+="$2 "
++            shift 2
++            ;;
++        '-s' | '--output-socket')
++            # QEMU output to socket
++            [[ -z "$2" ]] && error "'$1' requires a non-empty string"
++            socket_prefix="$2"
++            shift 2
++            ;;
++        '-n' | '--net-tap')
++            # VM w/ network
++            [[ -z "$2" ]] && mac='52:54:00:12:34:01' || mac="$2"
++            shift 2
++            ;;
++        '-v' | '--vsock')
++            # VM w/ vsock
++            [[ "$2" =~ ^[0-9]+$ ]] || error "'$1' requires a number"
++            cid="$2"
++            shift 2
++            ;;
++        '-c' | '--cmd')
++            # Command to run in the VM
++            [[ -z "$2" ]] && error "'$1' requires a non-empty string"
++            cmd="$2"
++            shift 2
++            ;;
++        '-t' | '--timeout')
++            # Change default timeout
++            [[ -z "$2" ]] && error "'$1' requires a non-empty string"
++            timeout="$2"
++            shift 2
++            ;;
++        '--no-pci')
++            # Switch to MMIO devices
++            device='device'
++            shift
++            ;;
++        '--no-kvm')
++            # Do not enable KVM
++            no_kvm=1
++            shift
++            ;;
++        '--drive-cache')
++            # Use drive cache (writeback)
++            dcache=writeback
++            shift
++            ;;
++        '--skip-fsck')
++            # Skip rootfs image check
++            skip_fsck=1
++            shift
++            ;;
++        --)
++            shift
++            break
++            ;;
++        *)
++            echo 'Internal error parsing args' >&2
++            exit 1
++            ;;
++        esac
++    done
++    cmdline+="mem=${ram}M"
++    [[ -z "${no_kvm}" ]] && extra_args+='-enable-kvm ' || true
++}
++
++setup_qemu_network() {
++    if [[ -n "${mac}" ]]; then
++        extra_args+="-nic tap,model=virtio-net-${device},mac=${mac} "
++    else
++        extra_args+="-netdev user,id=net0,hostfwd=tcp::${SSH_PORT_LOCAL}-:${SSH_PORT_VM} "
++        extra_args+="-device virtio-net-${device},netdev=net0 "
++    fi
++
++    if [[ -n "${cid}" ]]; then
++        extra_args+="-device vhost-vsock-${device},id=vsock0,guest-cid=${cid} "
++    fi
++}
++
++setup_qemu_socket() {
++    [[ -z "$1" ]] && error "'setup_qemu_socket()' requires a non-empty string"
++    stderr="${RUN_PATH}/${1}.stderr.log"
++    monitor_socket=${RUN_PATH}/${1}.monitor.sock
++    serial_socket=${RUN_PATH}/${1}.serial.sock
++    serial_log=${RUN_PATH}/${1}.serial.log
++    extra_args+="-chardev socket,id=ser0,path=${serial_socket},logfile=${serial_log},server=on,wait=off "
++    extra_args+="-serial chardev:ser0 "
++    extra_args+="-chardev socket,id=mon0,path=${monitor_socket},server=on,wait=off "
++    extra_args+='-monitor chardev:mon0 '
++}
++
++cleanup_qemu_socket() {
++    rm -f "${monitor_socket}" "${serial_socket}"
++    cleanup_log_file "${serial_log}"
++}
++
++print_qemu_output() {
++    [[ -n "$1" ]] && print_log_file "${serial_log}" || true
++}
++
++check_rootfs_img() {
++    [[ -z "$1" ]] && error "'check_rootfs_img()' requires a non-empty string"
++    fsck.ext4 -fy "$1" 1>/dev/null 2>"${stderr}" || res=$?
++    if [[ "${res}" -gt 2 ]]; then
++        log_error "'fsck.ext4' error" "${res}"
++        print_log_file "${stderr}"
++        cleanup_log_file "${stderr}"
++    fi
++}
++
++run_qemu() {
++    TERM=linux qemu-system-"$(uname -m)" \
++        -cpu "${cpu}" -m "${ram}" -smp "${smp}" -M "${machine}" -nographic \
++        -kernel "${kernel}" -append "${cmdline}" \
++        -drive if=none,id=rootfs,file="${rootfs}",format=raw,cache="${dcache}" \
++        -device "virtio-blk-${device}",drive=rootfs \
++        -fsdev local,id=fsdev0,path=/data/data,security_model=none \
++        -device "virtio-9p-${device}",fsdev=fsdev0,mount_tag=data \
++        -device "virtio-rng-${device}" \
++        -object acceldev-backend-vaccel,id=rt0 \
++        -device "virtio-accel-${device}",id=accel0,runtime=rt0 \
++        ${extra_args} 2>"${stderr}"
++}
++
++run_cmd() {
++    [[ -z "$1" ]] && error "'run_cmd()' requires a non-empty string"
++    sleep 1
++    ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o LogLevel=ERROR \
++        "${SSH_HOST}" -p "${SSH_PORT_LOCAL}" \
++        "${1}"' || res=$?; poweroff 2>/dev/null; exit "${res:-0}"'
++}
++
++main() {
++    parse_args "$@"
++
++    cd /data
++    mkdir -p "${RUN_PATH}" data
++    chown "$(stat -c %u .)":"$(stat -c %g .)" "${RUN_PATH}" data
++    setup_qemu_network
++    [[ -n "${socket_prefix}" ]] && setup_qemu_socket "${socket_prefix}"
++    [[ -z "${skip_fsck}" ]] && check_rootfs_img "${rootfs}"
++
++    res=0
++
++    if [[ -z "${cmd}" ]]; then
++        run_qemu || res=$?
++        if [[ "${res}" -ne 0 ]]; then
++            log_error "'run_qemu()' error" "${res}"
++            print_qemu_output "${socket_prefix}"
++            print_log_file "${stderr}"
++        fi
++
++        cleanup_qemu_socket "${socket_prefix}"
++        cleanup_log_file "${stderr}"
++        exit "${res}"
++    fi
++
++    if [[ -z "${socket_prefix}" ]]; then
++        socket_prefix=qemu-$(date +"%Y%m%d-%H%M%S")
++        setup_qemu_socket "${socket_prefix}"
++    fi
++
++    run_qemu &
++    pid_qemu=$!
++    if [[ "${timeout}" -ne 0 ]]; then
++        sleep "${timeout}" &&
++            echo 'Timeout' >>"${stderr}" &&
++            echo 'q' | socat - unix:"${monitor_socket}" &
++        pid_sleep=$!
++        disown
++    fi
++
++    run_cmd "${cmd}" || res=$?
++    [[ "${res}" -ne 0 ]] && log_error "'run_cmd()' error" "${res}"
++    wait "${pid_qemu}" || res=$?
++    [[ -n "${pid_sleep}" ]] && kill -9 "${pid_sleep}" &>/dev/null
++    if [[ "${res}" -ne 0 ]]; then
++        log_error "'run_qemu()' error" "${res}"
++        print_qemu_output "${socket_prefix}"
++        print_log_file "${stderr}"
++    fi
++
++    cleanup_qemu_socket "${socket_prefix}"
++    cleanup_log_file "${stderr}"
++    exit "${res}"
++}
++
++main "$@"
+Index: subprojects/vaccel/docker/vq-size.patch
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/subprojects/vaccel/docker/vq-size.patch b/subprojects/vaccel/docker/vq-size.patch
+new file mode 100644
+--- /dev/null	(revision 41ec9c4ac832fb8f8dc9771ce1e4fb1ce286ffae)
++++ b/subprojects/vaccel/docker/vq-size.patch	(revision 41ec9c4ac832fb8f8dc9771ce1e4fb1ce286ffae)
+@@ -0,0 +1,13 @@
++diff --git a/include/hw/virtio/virtio.h b/include/hw/virtio/virtio.h
++index b69d517496..64967d7e3d 100644
++--- a/include/hw/virtio/virtio.h
+++++ b/include/hw/virtio/virtio.h
++@@ -47,7 +47,7 @@ size_t virtio_feature_get_config_size(VirtIOFeature *features,
++ 
++ typedef struct VirtQueue VirtQueue;
++ 
++-#define VIRTQUEUE_MAX_SIZE 1024
+++#define VIRTQUEUE_MAX_SIZE 8192
++ 
++ typedef struct VirtQueueElement
++ {

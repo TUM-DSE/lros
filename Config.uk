@@ -1,0 +1,32 @@
+menuconfig LLAMACPP_LIBGGML
+	bool "llama.cpp libggml target"
+	default n
+	select LIBMUSL
+	select LIBARM_INTRINSICS
+
+menuconfig LLAMACPP_LIBLLAMA 
+	bool "llama.cpp libllama target"
+	default n
+	select LLAMACPP_LIBGGML
+	select LIBCXXABI
+	select LIBCXX
+	select LIBUNWIND
+	select COMPILER_RT
+
+menuconfig LLAMACPP_LIBCOMMON 
+	bool "llama.cpp libcommontarget"
+	default n
+	select LLAMACPP_LIBLLAMA
+	select LLAMACPP_LIBGGML
+
+
+config LLAMACPP
+	bool "llama.cpp example"
+	default y
+	select LLAMACPP_LIBGGML
+	select LLAMACPP_LIBLLAMA
+	select LLAMACPP_LIBCOMMON
+
+config LIBLLAMACPPKRAFT_MAIN_FUNCTION
+	bool "Provide main function"
+	default n

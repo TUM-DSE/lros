@@ -1,0 +1,21 @@
+Subject: [PATCH] Allow vAccel legacy device
+---
+Index: hw/virtio/virtio.c
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/hw/virtio/virtio.c b/hw/virtio/virtio.c
+--- a/hw/virtio/virtio.c	(revision d2f134a26a663673203a13fea15173578f65a716)
++++ b/hw/virtio/virtio.c	(revision 5b9fc697cf0d7e584a1ad54629f6a4a244881e07)
+@@ -3501,9 +3501,8 @@
+     case VIRTIO_ID_9P:
+     case VIRTIO_ID_RPROC_SERIAL:
+     case VIRTIO_ID_CAIF:
++	default: //vAccel
+         return true;
+-    default:
+-        return false;
+     }
+ }
+ 

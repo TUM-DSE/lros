@@ -1,0 +1,111 @@
+################################################################################
+# Library registration
+################################################################################
+$(eval $(call addlib_s,llamacpp_libllama,$(CONFIG_LLAMACPP_LIBLLAMA)))
+$(eval $(call addlib_s,llamacpp_libcommon,$(CONFIG_LLAMACPP_LIBCOMMON)))
+$(eval $(call addlib_s,llamacpp_libggml,$(CONFIG_LLAMACPP_LIBGGML)))
+$(eval $(call addlib,llamacpp,$(CONFIG_LLAMACPP)))
+
+################################################################################
+# Sources
+################################################################################]
+LLAMA.CPP_TAG = bdb2717e7e851b21b0197637c0d239d68a8b4a6e
+LLAMA.CPP_URL = https://github.com/TUM-DSE/llama.cpp/archive/$(LLAMA.CPP_TAG).zip
+LLAMA.CPP_SUBDIR = llama.cpp-$(LLAMA.CPP_TAG)
+$(eval $(call fetch,llama.cpp,$(LLAMA.CPP_URL)))
+$(eval $(call patch,llama.cpp,$(LLAMACPP_BASE)/patches,$(LLAMA.CPP_SUBDIR)))
+
+################################################################################
+# Helpers
+################################################################################
+LLAMA.CPP_SRC = $(LLAMA.CPP_ORIGIN)/$(LLAMA.CPP_SUBDIR)
+GGML_SRC = $(LLAMA.CPP_SRC)/ggml/src
+LLAMA_SRC = $(LLAMA.CPP_SRC)/src
+COMMON_SRC = $(LLAMA.CPP_SRC)/common
+
+################################################################################
+# Library includes
+################################################################################
+CINCLUDES-y += -I$(LLAMA.CPP_SRC)/ggml/include
+CINCLUDES-y += -I$(LLAMACPP_BASE)
+CXXINCLUDES-y += -I$(LLAMA.CPP_SRC)/ggml/include
+CXXINCLUDES-y += -I$(LLAMA.CPP_SRC)/include
+CXXINCLUDES-y += -I$(LLAMA.CPP_SRC)/common
+
+################################################################################
+# Flags
+################################################################################
+LLAMACPP_FLAGS = -U__gnu_linux__ -U__linux__
+
+# Suppress some warnings to make the build process look neater
+LLAMACPP_FLAGS_SUPPRESS = -Wno-missing-braces -Wno-unused-function -Wno-maybe-uninitialized
+
+LLAMACPP_LIBCOMMON_CFLAGS-y += $(LLAMACPP_FLAGS)
+LLAMACPP_LIBCOMMON_CXXFLAGS-y += $(LLAMACPP_FLAGS)
+LLAMACPP_LIBCOMMON_CFLAGS-y += $(LLAMACPP_FLAGS_SUPPRESS)
+LLAMACPP_LIBCOMMON_CXXFLAGS-y += $(LLAMACPP_FLAGS_SUPPRESS)
+LLAMACPP_LIBLLAMA_CFLAGS-y += $(LLAMACPP_FLAGS)
+LLAMACPP_LIBLLAMA_CXXFLAGS-y += $(LLAMACPP_FLAGS)
+LLAMACPP_LIBLLAMA_CFLAGS-y += $(LLAMACPP_FLAGS_SUPPRESS)
+LLAMACPP_LIBLLAMA_CXXFLAGS-y += $(LLAMACPP_FLAGS_SUPPRESS)
+LLAMACPP_LIBGGML_CFLAGS-y += $(LLAMACPP_FLAGS)
+LLAMACPP_LIBGGML_CXXFLAGS-y += $(LLAMACPP_FLAGS)
+LLAMACPP_LIBGGML_CFLAGS-y += $(LLAMACPP_FLAGS_SUPPRESS)
+LLAMACPP_LIBGGML_CXXFLAGS-y += $(LLAMACPP_FLAGS_SUPPRESS)
+LLAMACPP_CFLAGS-y += $(LLAMACPP_FLAGS)
+LLAMACPP_CXXFLAGS-y += $(LLAMACPP_FLAGS)
+LLAMACPP_CFLAGS-y += $(LLAMACPP_FLAGS_SUPPRESS)
+LLAMACPP_CXXFLAGS-y += $(LLAMACPP_FLAGS_SUPPRESS)
+
+################################################################################
+# Glue code
+################################################################################
+# Include paths
+# LLAMACPP_CINCLUDES-y   += $(LLAMACPP_COMMON_INCLUDES-y)
+# LLAMACPP_CXXINCLUDES-y += $(LLAMACPP_COMMON_INCLUDES-y)
+
+
+#LLAMACPPSRCS-$(CONFIG_LLAMACPP_MAIN_FUNCTION) += $(LLAMACPP_BASE)/main.c|unikraft
+
+
+################################################################################
+# Library sources
+################################################################################
+LLAMACPP_LIBGGML_SRCS-y += $(GGML_SRC)/ggml.c
+LLAMACPP_LIBGGML_SRCS-y += $(GGML_SRC)/ggml-cpu.c
+LLAMACPP_LIBGGML_SRCS-y += $(GGML_SRC)/ggml-alloc.c
+LLAMACPP_LIBGGML_SRCS-y += $(GGML_SRC)/ggml-backend.cpp
+LLAMACPP_LIBGGML_SRCS-y += $(GGML_SRC)/ggml-quants.c
+LLAMACPP_LIBGGML_SRCS-y += $(GGML_SRC)/ggml-aarch64.c
+
+
+LLAMACPP_LIBLLAMA_SRCS-y += $(LLAMA_SRC)/llama.cpp
+LLAMACPP_LIBLLAMA_SRCS-y += $(LLAMA_SRC)/llama-vocab.cpp
+LLAMACPP_LIBLLAMA_SRCS-y += $(LLAMA_SRC)/llama-grammar.cpp
+LLAMACPP_LIBLLAMA_SRCS-y += $(LLAMA_SRC)/llama-sampling.cpp
+LLAMACPP_LIBLLAMA_SRCS-y += $(LLAMA_SRC)/unicode.cpp
+LLAMACPP_LIBLLAMA_SRCS-y += $(LLAMA_SRC)/unicode-data.cpp
+
+
+$(LLAMA.CPP_SRC)/common/build-info.cpp: $(LLAMA.CPP_ORIGIN)/../.origin
+	$(call verbose_cmd,CONFIG,llamacpp_libcommon: $(notdir $@), cd $(LLAMA.CPP_SRC) && sh ./scripts/build-info.sh "$(CC)" > $@.tmp && if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi)
+
+$(LLAMACPP_LIBCOMMON_BUILD)/.prepared: $(LLAMA.CPP_SRC)/common/build-info.cpp
+
+UK_PREPARE-$(CONFIG_LLLAMACPP_LIBCOMMON) += $(LLAMACPP_LIBCOMMON_BUILD)/.prepared
+
+
+
+LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/common.cpp
+LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/build-info.cpp
+LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/arg.cpp
+LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/log.cpp
+LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/sampling.cpp
+LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/console.cpp
+LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/json-schema-to-grammar.cpp
+LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/ngram-cache.cpp
+
+LLAMACPP_SRCS-y += $(LLAMA.CPP_SRC)/examples/main/main.cpp
+LLAMACPP_LIBS += llamacpp_libllama
+LLAMACPP_LIBS += llamacpp_libggmal
+LLAMACPP_LIBS += llamacpp_libcommon
