@@ -11,6 +11,8 @@
 #define K 64
 
 #define max(a, b) ((a) > (b) ? (a) : (b))
+#define abs(x) (x) < 0 ? -(x) : (x)
+
 
 #define ELEM_2D(array, i, j, ld) (*((array) + i*ld + j))
 
@@ -79,6 +81,8 @@ int main(int argc, char *argv[])
 	if (ret)
 		return ret;
 
+	fprintf(stdout, "Adding matrices of size %ux%u.\nIntialized as A=%f, B=%f (all matrix entries are equal), alpha=%f.\n", M, M, A[0], B[0], alpha);
+
 	ret = vaccel_sgemm(
 		&session,
 		M, N, K,
@@ -93,10 +97,15 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	fprintf(stdout, "Computing computation error. Expected result: %f\n", alpha*A[0] + B[0]);
+
     float maxError = 0.0f;
-    for (int i = 0; i < N; i++)
-        maxError = max(maxError, abs(C[i] - 4.0f));
-    fprintf(stderr, "Max error: %f\n", maxError);
+    float maxVal = 0.0f;
+    for (int i = 0; i < N; i++) {
+        	maxError = max(maxError, abs(C[i] - (alpha + 2.0f)));
+		maxVal = max(maxVal, C[i]);
+	}
+    fprintf(stderr, "Max value: %f\nMax error: %f\n", maxVal, maxError);
 
 out:
 	vaccel_sess_free(&session);
