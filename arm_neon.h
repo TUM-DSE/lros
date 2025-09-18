@@ -27,6 +27,9 @@
 #ifndef _AARCH64_NEON_H_
 #define _AARCH64_NEON_H_
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wnarrowing"
+
 #pragma GCC push_options
 #pragma GCC target ("+nothing+simd")
 
@@ -28743,4 +28746,5 @@ vaddq_p128 (poly128_t __a, poly128_t __b)
 #undef __aarch64_vdupq_laneq_u32
 #undef __aarch64_vdupq_laneq_u64
 
+#pragma GCC diagnostic pop
 #endif
