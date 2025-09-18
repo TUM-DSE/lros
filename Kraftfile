@@ -9,11 +9,11 @@ targets:
 - qemu/arm64
 
 libraries:
-  libcxxabi: stable
-  libcxx: stable
-  libunwind: stable
+  libcxxabi: 0.16.0
+  libcxx: 0.16.0
+  libunwind: 0.16.0
   compiler-rt:
-    version: stable
+    version: 0.18.0
     kconfig:
       CONFIG_LIBCOMPILER_RT: 'y'
-  musl: stable
+  musl: 0.19.0
