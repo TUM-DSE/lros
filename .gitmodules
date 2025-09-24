@@ -1,0 +1,6 @@
+[submodule "lros-unikraft"]
+	path = lros-unikraft
+	url = git@github.com:TUM-DSE/lros-unikraft.git
+[submodule "llama.cpp-rknn"]
+	path = llama.cpp-rknn
+	url = git@gitlab.lrz.de:00000000014A6BD7/llama.cpp-rknn.git
