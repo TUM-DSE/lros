@@ -36,10 +36,11 @@ CXXINCLUDES-y += -I$(LLAMA.CPP_SRC)/common
 CINCLUDES-y += -I$(LLAMA.CPP_SRC)/ggml/src
 CXXINCLUDES-y += -I$(LLAMA.CPP_SRC)/ggml/src
 CXXINCLUDES-y += -I$(LLAMA.CPP_SRC)/ggml/src/ggml-cpu
+CXXINCLUDES-y += -I$(LLAMACPP_LIBGGML_BUILD)
 ################################################################################
 # Flags
 ################################################################################
-LLAMACPP_FLAGS = -U__gnu_linux__ -U__linux__ -DGGML_USE_CPU -DGGML_USE_CPU_AARCH64
+LLAMACPP_FLAGS = -U__gnu_linux__ -U__linux__ -DGGML_USE_CPU -DGGML_USE_CPU_AARCH64 -DGGML_USE_RKNN
 
 # Suppress some warnings to make the build process look neater
 LLAMACPP_FLAGS_SUPPRESS = -Wno-missing-braces -Wno-unused-function -Wno-maybe-uninitialized -Wno-attributes
@@ -91,6 +92,8 @@ LLAMACPP_LIBGGML_SRCS-y += $(GGML_SRC)/ggml-cpu/ggml-cpu-aarch64.cpp
 LLAMACPP_LIBGGML_SRCS-y += $(GGML_SRC)/ggml-cpu/ggml-cpu-quants.c
 LLAMACPP_LIBGGML_SRCS-y += $(GGML_SRC)/ggml-cpu/ggml-cpu-traits.cpp
 
+LLAMACPP_LIBGGML_SRCS-y += $(GGML_SRC)/ggml-rknn/ggml-rknn.cpp
+
 
 LLAMACPP_LIBLLAMA_SRCS-y += $(LLAMA_SRC)/llama.cpp
 LLAMACPP_LIBLLAMA_SRCS-y += $(LLAMA_SRC)/llama-adapter.cpp
@@ -120,9 +123,14 @@ $(LLAMA.CPP_SRC)/common/build-info.cpp:
 
 $(LLAMACPP_LIBCOMMON_BUILD)/.prepared: $(LLAMA.CPP_SRC)/common/build-info.cpp
 
-UK_PREPARE-$(CONFIG_LLLAMACPP_LIBCOMMON) += $(LLAMACPP_LIBCOMMON_BUILD)/.prepared
+UK_PREPARE-$(CONFIG_LLAMACPP_LIBCOMMON) += $(LLAMACPP_LIBCOMMON_BUILD)/.prepared
 
+$(LLAMACPP_LIBGGML_BUILD)/model_related_config.h: $(LLAMA.CPP_SRC)/ggml/include/model_related_config.h.in
+	$(call verbose_cmd,CONFIG,llamacpp_libggml: $(notdir $@), cd $(LLAMA.CPP_SRC) && sed s/@CMAKE_SOURCE_DIR@// $< > $@.tmp && if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi)
 
+$(LLAMACPP_LIBGGML_BUILD)/.prepared: $(LLAMACPP_LIBGGML_BUILD)/model_related_config.h
+
+UK_PREPARE-$(CONFIG_LLAMACPP_LIBGGML) += $(LLAMACPP_LIBGGML_BUILD)/.prepared
 
 LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/arg.cpp
 LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/chat.cpp
