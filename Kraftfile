@@ -2,7 +2,7 @@ spec: v0.6
 
 name: llama.cpp
 
-unikraft: ../unikraft
+unikraft: lros-unikraft
   
 
 targets:
@@ -16,4 +16,4 @@ libraries:
     version: 0.18.0
     kconfig:
       CONFIG_LIBCOMPILER_RT: 'y'
-  musl: 0.19.0
+  musl: staging 
