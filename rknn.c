@@ -59,6 +59,20 @@ static int va_rknn_matmul_run(struct vaccel_session *sess, vaccel_matmul_ctx ctx
 	return rknn_matmul_run(ctx);
 }
 
+static int va_rknn_matmul_set_matrix(struct vaccel_session *sess,
+			     vaccel_tensor_mem_handle *dst, void *src,
+			     size_t nbytes){
+	memcpy(((rknn_tensor_mem *)dst)->virt_addr, src, nbytes);
+	return VACCEL_OK;
+}
+
+static int va_rknn_matmul_get_matrix(struct vaccel_session *sess, void *dst,
+			     vaccel_tensor_mem_handle *src, size_t nbytes){
+        memcpy(dst, ((rknn_tensor_mem *)src)->virt_addr, nbytes);
+        return VACCEL_OK;
+
+}
+
 
 struct vaccel_op ops[] = {
 	VACCEL_OP_INIT(ops[0], VACCEL_OP_MATMUL_CREATE, va_rknn_matmul_create),
@@ -68,6 +82,8 @@ struct vaccel_op ops[] = {
 	VACCEL_OP_INIT(ops[4], VACCEL_OP_MATMUL_SET_IO, va_rknn_matmul_set_io_mem),
 	VACCEL_OP_INIT(ops[5], VACCEL_OP_MATMUL_SET_CORE_MASK, va_rknn_matmul_set_core_mask),
 	VACCEL_OP_INIT(ops[6], VACCEL_OP_MATMUL_RUN, va_rknn_matmul_run),
+	VACCEL_OP_INIT(ops[7], VACCEL_OP_MATMUL_SET_MATRIX, va_rknn_matmul_set_matrix),
+	VACCEL_OP_INIT(ops[8], VACCEL_OP_MATMUL_GET_MATRIX, va_rknn_matmul_get_matrix),
 };
 
 static int init(void)
