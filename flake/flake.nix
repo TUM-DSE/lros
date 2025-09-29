@@ -15,12 +15,11 @@
       vaccel = pkgs.gcc13Stdenv.mkDerivation {
 	src = pkgs.fetchgit {
 		name="test";
-		url = "https://github.com/nubificus/vaccel";
-		rev = "refs/tags/v0.7.1";
+		url = "https://github.com/TUM-DSE/vaccel";
+		rev = "5d919a5366cc5ab06de7e24964f11389d7f96477";
 		# TODO: Figure out why the hashes change
-		hash = if pkgs.stdenv.hostPlatform.isAarch then "sha256-Z6bfI2FQ2QpVusQpUE23errywPj20DIbTSAKh0qO1L4=" else "sha256-BfvdbdsCdgPso99s4A1BkSSp9dSKApqeTwMs7KpEa44=";
+		hash = "sha256-RQk7IcH9Twf2zcggCrnd2PT5IcBJLDfGMdtqaRftPFw="; #if pkgs.stdenv.hostPlatform.isAarch then "sha256-Z6bfI2FQ2QpVusQpUE23errywPj20DIbTSAKh0qO1L4=" else "sha256-BfvdbdsCdgPso99s4A1BkSSp9dSKApqeTwMs7KpEa44=";
 		fetchSubmodules = true;
-		leaveDotGit=true;
 		postFetch=''
 			cd "$out"
 
@@ -39,7 +38,7 @@
 
 	preConfigure=''
 		substituteInPlace meson.build --replace "git submodule update --init >/dev/null && " ""
-		echo "0.7.1">.version
+		echo "0.7.1-99">.version
 	'';
 	name = "vAccel";
       };
@@ -85,13 +84,34 @@
                         (nixpkgs.lib.cmakeFeature "CMAKE_CUDA_ARCHITECTURES" pkgs.cudaPackages.flags.cmakeCudaArchitecturesString)
                 ];
         };
+        vaccel-plugins-matmul = pkgs.stdenv.mkDerivation {
+                name = "vaccel-plugins-matmul";
+                src = ../vaccel_plugins;
+                nativeBuildInputs = with pkgs; with pkgs.cudaPackages; [
+                        cmake
+                        autoAddDriverRunpath
+                        cuda_nvcc
+                ];
+                buildInputs = with pkgs; with pkgs.cudaPackages; [
+                                (nixpkgs.lib.getDev libcublas)
+                                (nixpkgs.lib.getLib libcublas)
+                                (nixpkgs.lib.getOutput "static" libcublas)
+                                cuda_cudart
+                                cuda_cccl
+                                vaccel
+                        ];
+                cmakeFlags = [
+                        (nixpkgs.lib.cmakeBool "CMAKE_VERBOSE_MAKEFILE" true)
+                        (nixpkgs.lib.cmakeFeature "CMAKE_CUDA_ARCHITECTURES" pkgs.cudaPackages.flags.cmakeCudaArchitecturesString)
+                ];
+        };
 
     in
     {
       devShell = (pkgs.mkShell.override { stdenv = pkgs.gcc13Stdenv; }) {
         buildInputs = with pkgs; [
 		gcc13
-        	kraft
+        kraft
 		myqemu
 		gnumake
 		pkg-config
@@ -100,9 +120,12 @@
 		bison
 		unzip
 		vaccel
-	] ++ nixpkgs.lib.optionals pkgs.stdenv.hostPlatform.isAarch [ libsaxpy-vaccel ];
+	] ++ nixpkgs.lib.optionals pkgs.stdenv.hostPlatform.isAarch [ libsaxpy-vaccel vaccel-plugins-matmul ];
 
-	VACCEL_BACKENDS= nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${libsaxpy-vaccel}/lib/libsaxpy.so";
+	VACCEL_PLUGINS= nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${vaccel-plugins-matmul}/lib/libcuda.so";
+	VACCEL_PLUGINS_CUDA= nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${vaccel-plugins-matmul}/lib/libcuda.so";
+	VACCEL_PLUGINS_RKNN= nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${vaccel-plugins-matmul}/lib/librknn.so";
+	VACCEL_PLUGINS_SAXPY= nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${libsaxpy-vaccel}/lib/libsaxpy.so";
       };
     }
   );
