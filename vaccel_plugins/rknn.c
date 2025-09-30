@@ -73,6 +73,23 @@ static int va_rknn_matmul_get_matrix(struct vaccel_session *sess, void *dst,
 
 }
 
+static int va_rknn_matmul_get_props(struct vaccel_session *sess, char *props, size_t nbytes) {
+    if (nbytes == 0) {
+        return VACCEL_EINVAL;
+    }
+
+    const int maxProps = 1 + 1
+    int nprops = nbytes > maxProps ? maxProps : nbytes;
+
+    switch (nprops) {
+        case 2:
+            props[1] = 1; // Prefer matrix transforms: 0:no !0:yes
+        case 1:
+            props[0] = nprops - maxProps;
+    }
+
+    return VACCEL_OK;
+}
 
 struct vaccel_op ops[] = {
 	VACCEL_OP_INIT(ops[0], VACCEL_OP_MATMUL_CREATE, va_rknn_matmul_create),
@@ -84,6 +101,7 @@ struct vaccel_op ops[] = {
 	VACCEL_OP_INIT(ops[6], VACCEL_OP_MATMUL_RUN, va_rknn_matmul_run),
 	VACCEL_OP_INIT(ops[7], VACCEL_OP_MATMUL_SET_MATRIX, va_rknn_matmul_set_matrix),
 	VACCEL_OP_INIT(ops[8], VACCEL_OP_MATMUL_GET_MATRIX, va_rknn_matmul_get_matrix),
+	VACCEL_OP_INIT(ops[8], VACCEL_OP_MATMUL_GET_PROPS, va_rknn_matmul_get_props),
 };
 
 static int init(void)
