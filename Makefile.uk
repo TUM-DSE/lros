@@ -18,7 +18,7 @@ $(eval $(call addlib,llamacpp,$(CONFIG_LLAMACPP)))
 ################################################################################
 # Helpers
 ################################################################################
-LLAMA.CPP_SRC = $(LLAMACPP_BASE)/../llama.cpp-rknn
+LLAMA.CPP_SRC = $(LLAMACPP_BASE)/llama.cpp-rknn
 GGML_SRC = $(LLAMA.CPP_SRC)/ggml/src
 LLAMA_SRC = $(LLAMA.CPP_SRC)/src
 COMMON_SRC = $(LLAMA.CPP_SRC)/common
