@@ -138,7 +138,7 @@ static int va_cuda_matmul_run(struct vaccel_session *sess, vaccel_matmul_ctx ctx
                    &alpha, info.A, CUDA_R_16F, info.v_info.K,
                    info.B, CUDA_R_16F, info.v_info.K,
                    &beta, info.C, CUDA_R_32F, info.v_info.N,
-                   CUBLAS_COMPUTE_16F,
+                   CUBLAS_COMPUTE_32F,
                    CUBLAS_GEMM_DEFAULT_TENSOR_OP), VACCEL_EINVAL);
 
     return VACCEL_OK;
