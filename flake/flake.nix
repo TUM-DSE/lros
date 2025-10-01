@@ -57,12 +57,20 @@
 		"--localstatedir=/var"
 		"--sysconfdir=/etc"
 		"--enable-virtfs"
-		"--enable-debug"
 	]
 	++ nixpkgs.lib.optionals pkgs.stdenv.hostPlatform.isAarch [ "--target-list=aarch64-softmmu" ]
 	++ nixpkgs.lib.optionals pkgs.stdenv.hostPlatform.isx86_64 [ "--target-list=x86_64-softmmu" ];
-	dontStrip=true;
       });
+      myqemu-debug = pkgs.enableDebugging (myqemu.overrideAttrs (finalAttrs: previousAttrs: {
+        configureFlags = previousAttrs.configureFlags ++ ["--enable-debug"];
+        dontStrip = true;
+        postFixup =
+          previousAttrs.postFixup
+          + ''
+            find $out/bin -type f -executable ! -name '\.qemu*' -exec mv {} {}-debug \;
+            rm $out/bin/qemu-kvm
+          '';
+      }));
       libsaxpy-vaccel = pkgs.stdenv.mkDerivation {
                 name = "libsaxpy-vaccel";
                 src = ./src;
@@ -113,6 +121,7 @@
 		gcc13
         kraft
 		myqemu
+		myqemu-debug
 		gnumake
 		pkg-config
 		ncurses
