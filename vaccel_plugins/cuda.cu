@@ -162,7 +162,7 @@ static int va_cuda_matmul_get_props(struct vaccel_session *sess, char *props, si
         return VACCEL_EINVAL;
     }
 
-    const int maxProps = 1 + 1
+    const int maxProps = 1 + 1;
     int nprops = nbytes > maxProps ? maxProps : nbytes;
 
     switch (nprops) {
