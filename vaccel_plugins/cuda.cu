@@ -130,13 +130,13 @@ static int va_cuda_matmul_set_core_mask(struct vaccel_session *sess,
 static int va_cuda_matmul_run(struct vaccel_session *sess, vaccel_matmul_ctx ctx) {
     auto &info = infos[ctx];
 
-    const half alpha = 1.0f;
-    const half beta = 0.0f;
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
 
     CHECK_BLAS(cublasGemmEx(cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N,
                    info.v_info.N, info.v_info.M, info.v_info.K,
-                   &alpha, info.A, CUDA_R_16F, info.v_info.K,
-                   info.B, CUDA_R_16F, info.v_info.K,
+                   &alpha, info.B, CUDA_R_16F, info.v_info.K,
+                   info.A, CUDA_R_16F, info.v_info.K,
                    &beta, info.C, CUDA_R_32F, info.v_info.N,
                    CUBLAS_COMPUTE_32F,
                    CUBLAS_GEMM_DEFAULT_TENSOR_OP), VACCEL_EINVAL);
