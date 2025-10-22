@@ -126,7 +126,7 @@ $(LLAMACPP_LIBCOMMON_BUILD)/.prepared: $(LLAMA.CPP_SRC)/common/build-info.cpp
 UK_PREPARE-$(CONFIG_LLAMACPP_LIBCOMMON) += $(LLAMACPP_LIBCOMMON_BUILD)/.prepared
 
 $(LLAMACPP_LIBGGML_BUILD)/model_related_config.h: $(LLAMA.CPP_SRC)/ggml/include/model_related_config.h.in
-	$(call verbose_cmd,CONFIG,llamacpp_libggml: $(notdir $@), cd $(LLAMA.CPP_SRC) && sed s/@CMAKE_SOURCE_DIR@// $< > $@.tmp && if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi)
+	$(call verbose_cmd,CONFIG,llamacpp_libggml: $(notdir $@), cd $(LLAMA.CPP_SRC) && sed s.@CMAKE_SOURCE_DIR@/scripts./root/config. $< > $@.tmp && if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi)
 
 $(LLAMACPP_LIBGGML_BUILD)/.prepared: $(LLAMACPP_LIBGGML_BUILD)/model_related_config.h
 
@@ -144,7 +144,8 @@ LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/sampling.cpp
 LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/speculative.cpp
 LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/build-info.cpp
 
-LLAMACPP_SRCS-y += $(LLAMA.CPP_SRC)/examples/main/main.cpp
+LLAMACPP_SRCS-$(CONFIG_LLAMACPP_APP_CLI) += $(LLAMA.CPP_SRC)/examples/main/main.cpp
+LLAMACPP_SRCS-$(CONFIG_LLAMACPP_APP_BENCH) += $(LLAMA.CPP_SRC)/examples/batched-bench/batched-bench.cpp
 LLAMACPP_LIBS += llamacpp_libllama
 LLAMACPP_LIBS += llamacpp_libggmal
 LLAMACPP_LIBS += llamacpp_libcommon

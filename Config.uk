@@ -27,6 +27,15 @@ config LLAMACPP
 	select LLAMACPP_LIBLLAMA
 	select LLAMACPP_LIBCOMMON
 
-config LIBLLAMACPPKRAFT_MAIN_FUNCTION
-	bool "Provide main function"
-	default n
+choice LLAMACPP_APP
+        prompt "Llama.cpp Application that runs in the unikernel"
+
+        default LLAMACPP_APP_CLI
+
+        config LLAMACPP_APP_CLI
+                bool "CLI"
+
+        config LLAMACPP_APP_BENCH
+                bool "Bench"
+endchoice
+
