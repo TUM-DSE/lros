@@ -4,6 +4,17 @@ menuconfig LLAMACPP_LIBGGML
 	select LIBMUSL
 	select LIBARM_INTRINSICS
 
+config LLAMACPP_LLAMAFILE_SGEMM
+	depends on LLAMACPP_LIBGGML
+	bool "Use llamafile sgemm kernels"
+	default y
+
+config LLAMACPP_VACCEL
+	depends on LLAMACPP_LIBGGML
+	depends on LIBVACCELRT
+	bool "Use vaccel llama backend"
+	default y
+
 menuconfig LLAMACPP_LIBLLAMA 
 	bool "llama.cpp libllama target"
 	default n
@@ -18,7 +29,6 @@ menuconfig LLAMACPP_LIBCOMMON
 	default n
 	select LLAMACPP_LIBLLAMA
 	select LLAMACPP_LIBGGML
-
 
 config LLAMACPP
 	bool "llama.cpp example"
