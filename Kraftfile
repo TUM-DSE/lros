@@ -2,15 +2,66 @@ spec: v0.6
 
 name: llama.cpp
 
-unikraft: lros-unikraft
-  
+unikraft:
+  source: lros-unikraft
+  kconfig:
+    CONFIG_PAGING: 'y'
+    CONFIG_LIBRAMFS: 'y'
+    CONFIG_LIBUKINTCTLR_GICV3: 'y'
+    CONFIG_LIBPOSIX_FUTEX_WAKE_PREFER_CHILD: 'y'
+    CONFIG_LIBPOSIX_PROCESS_CLONE_PREFER_CHILD: 'y'
+    CONFIG_LIBUKRANDOM: 'y'
+    CONFIG_LIBUKRANDOM_DEVFS: 'y'
+    CONFIG_LIBUKBOOT_GRACEFUL_SHUTDOWN: 'y'
+    CONFIG_LIBPOSIX_PROCESS_MULTIPROCESS: 'y'
+    CONFIG_LIBUKBOOT_INIT: 'y'
+    CONFIG_LIBUKFALLOC: 'y'
+    CONFIG_LIBUK9P: 'y'
+    CONFIG_LIBUKLIBPARAM: 'y'
+
 
 targets:
+- name: "bench-vaccel"
+  plat: qemu
+  arch: arm64
+  kconfig:
+    CONFIG_LIBVACCELRT: 'y'
+    CONFIG_LLAMACPP_APP_BENCH: 'y'
+    CONFIG_LLAMACPP_VACCEL: 'y'
+    CONFIG_LLAMACPP_LLAMAFILE_SGEMM: 'y'
+- name: "bench-vaccel-novec"
+  plat: qemu
+  arch: arm64
+  kconfig:
+    CONFIG_LIBVACCELRT: 'y'
+    CONFIG_LLAMACPP_APP_BENCH: 'y'
+    CONFIG_LLAMACPP_VACCEL: 'y'
+    CONFIG_LLAMACPP_LLAMAFILE_SGEMM: 'n'
+- name: "bench-cpu"
+  plat: qemu
+  arch: arm64
+  kconfig:
+    CONFIG_LLAMACPP_APP_BENCH: 'y'
+    CONFIG_LLAMACPP_VACCEL: 'n'
+    CONFIG_LLAMACPP_LLAMAFILE_SGEMM: 'y'
+- name: "bench-cpu-novec"
+  plat: qemu
+  arch: arm64
+  kconfig:
+    CONFIG_LLAMACPP_APP_BENCH: 'y'
+    CONFIG_LLAMACPP_VACCEL: 'n'
+    CONFIG_LLAMACPP_LLAMAFILE_SGEMM: 'n'
 - qemu/arm64
 
 libraries:
-  libcxxabi: 0.16.0
-  libcxx: 0.16.0
+  libcxxabi:
+    version: 0.16.0
+    kconfig:
+      CONFIG_LIBCXXABI_THREADS: 'y'
+  libcxx:
+    version: 0.16.0
+    kconfig:
+      CONFIG_CXX_THREADS: 'y'
   libunwind: 0.16.0
   compiler-rt:
     version: 0.18.0
