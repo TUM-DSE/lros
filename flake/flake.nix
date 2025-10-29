@@ -128,15 +128,23 @@
             bison
             unzip
             vaccel
+
+            cmake
+            git
           ]
           ++ nixpkgs.lib.optionals pkgs.stdenv.hostPlatform.isAarch [
             libsaxpy-vaccel
             vaccel-plugins-matmul
-          ];
+          ] ++
+         ( with pkgs.cudaPackages; [
+           cuda_nvcc
+           cuda_cudart
+           cuda_cccl # <nv/target>
+           libcublas
+         ]);
 
-        VACCEL_PLUGINS = nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${vaccel-plugins-matmul}/lib/libcuda.so";
-        VACCEL_PLUGINS_CUDA = nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${vaccel-plugins-matmul}/lib/libcuda.so";
-        VACCEL_PLUGINS_RKNN = nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${vaccel-plugins-matmul}/lib/librknn.so";
+        VACCEL_PLUGINS_CUDA = nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${vaccel-plugins-matmul}/lib/libmatmulcuda.so";
+        VACCEL_PLUGINS_RKNN = nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${vaccel-plugins-matmul}/lib/libmatmulrknn.so";
         VACCEL_PLUGINS_SAXPY = nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${libsaxpy-vaccel}/lib/libsaxpy.so";
       };
     });
