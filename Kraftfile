@@ -18,6 +18,8 @@ unikraft:
     CONFIG_LIBUKFALLOC: 'y'
     CONFIG_LIBUK9P: 'y'
     CONFIG_LIBUKLIBPARAM: 'y'
+    CONFIG_LIBUKVMEM: 'y'
+    CONFIG_LIBPOSIX_MMAP: 'y'
 
 
 targets:
