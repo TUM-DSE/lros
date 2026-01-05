@@ -14,6 +14,7 @@
           cudaCapabilities = ["7.2" "8.7"];
         };
       };
+      cudaPackages = pkgs.cudaPackages_12_6;
       vaccel = pkgs.gcc13Stdenv.mkDerivation {
         src = pkgs.fetchgit {
           name = "vaccel-src";
@@ -71,13 +72,13 @@
         name = "libsaxpy-vaccel";
         src = ./src;
         nativeBuildInputs = with pkgs;
-        with pkgs.cudaPackages; [
+        with cudaPackages; [
           cmake
           autoAddDriverRunpath
           cuda_nvcc
         ];
         buildInputs = with pkgs;
-        with pkgs.cudaPackages; [
+        with cudaPackages; [
           (nixpkgs.lib.getDev libcublas)
           (nixpkgs.lib.getLib libcublas)
           (nixpkgs.lib.getOutput "static" libcublas)
@@ -87,20 +88,20 @@
         ];
         cmakeFlags = [
           (nixpkgs.lib.cmakeBool "CMAKE_VERBOSE_MAKEFILE" true)
-          (nixpkgs.lib.cmakeFeature "CMAKE_CUDA_ARCHITECTURES" pkgs.cudaPackages.flags.cmakeCudaArchitecturesString)
+          (nixpkgs.lib.cmakeFeature "CMAKE_CUDA_ARCHITECTURES" cudaPackages.flags.cmakeCudaArchitecturesString)
         ];
       };
       vaccel-plugins-matmul = pkgs.stdenv.mkDerivation {
         name = "vaccel-plugins-matmul";
         src = ../vaccel_plugins;
         nativeBuildInputs = with pkgs;
-        with pkgs.cudaPackages; [
+        with cudaPackages; [
           cmake
           autoAddDriverRunpath
           cuda_nvcc
         ];
         buildInputs = with pkgs;
-        with pkgs.cudaPackages; [
+        with cudaPackages; [
           (nixpkgs.lib.getDev libcublas)
           (nixpkgs.lib.getLib libcublas)
           (nixpkgs.lib.getOutput "static" libcublas)
@@ -110,7 +111,7 @@
         ];
         cmakeFlags = [
           (nixpkgs.lib.cmakeBool "CMAKE_VERBOSE_MAKEFILE" true)
-          (nixpkgs.lib.cmakeFeature "CMAKE_CUDA_ARCHITECTURES" pkgs.cudaPackages.flags.cmakeCudaArchitecturesString)
+          (nixpkgs.lib.cmakeFeature "CMAKE_CUDA_ARCHITECTURES" cudaPackages.flags.cmakeCudaArchitecturesString)
         ];
       };
     in {
@@ -136,7 +137,7 @@
             libsaxpy-vaccel
             vaccel-plugins-matmul
           ] ++
-         ( with pkgs.cudaPackages; [
+         ( with cudaPackages; [
            cuda_nvcc
            cuda_cudart
            cuda_cccl # <nv/target>
