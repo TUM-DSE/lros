@@ -15,6 +15,12 @@ config LLAMACPP_VACCEL
 	bool "Use vaccel llama backend"
 	default y
 
+config LLAMACPP_VACCELOH
+	depends on LLAMACPP_LIBGGML
+	depends on LIBVACCELRT
+	bool "Use vacceloh llama backend"
+	default y
+
 menuconfig LLAMACPP_LIBLLAMA 
 	bool "llama.cpp libllama target"
 	default n

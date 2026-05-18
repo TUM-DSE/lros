@@ -23,6 +23,22 @@ unikraft:
 
 
 targets:
+- name: "bench-vacceloh"
+  plat: qemu
+  arch: arm64
+  kconfig:
+    CONFIG_LIBVACCELRT: 'y'
+    CONFIG_LLAMACPP_APP_BENCH: 'y'
+    CONFIG_LLAMACPP_VACCELOH: 'y'
+    CONFIG_LLAMACPP_LLAMAFILE_SGEMM: 'y'
+- name: "bench-vacceloh-novec"
+  plat: qemu
+  arch: arm64
+  kconfig:
+    CONFIG_LIBVACCELRT: 'y'
+    CONFIG_LLAMACPP_APP_BENCH: 'y'
+    CONFIG_LLAMACPP_VACCELOH: 'y'
+    CONFIG_LLAMACPP_LLAMAFILE_SGEMM: 'n'
 - name: "bench-vaccel"
   plat: qemu
   arch: arm64
