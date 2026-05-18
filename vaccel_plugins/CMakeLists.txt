@@ -16,4 +16,4 @@ target_compile_features(matmulcuda PRIVATE cxx_std_14)
 target_compile_options(matmulcuda PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
                                      --expt-relaxed-constexpr>)
 
-install(TARGETS matmulcuda)
+install(TARGETS matmulcuda matmulrknn)
