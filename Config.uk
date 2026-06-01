@@ -53,5 +53,8 @@ choice LLAMACPP_APP
 
         config LLAMACPP_APP_BENCH
                 bool "Bench"
+
+        config LLAMACPP_APP_SERVER
+                bool "Bench"
 endchoice
 

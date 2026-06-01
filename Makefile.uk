@@ -29,6 +29,7 @@ COMMON_SRC = $(LLAMA.CPP_SRC)/common
 CINCLUDES-y += -I$(LLAMA.CPP_SRC)/ggml/include
 CINCLUDES-y += -I$(LLAMACPP_BASE)
 CXXINCLUDES-y += -I$(LLAMACPP_BASE)
+CXXINCLUDES-y += -I$(LLAMA.CPP_SRC)
 CXXINCLUDES-y += -I$(LLAMA.CPP_SRC)/ggml/include
 CXXINCLUDES-y += -I$(LLAMA.CPP_SRC)/include
 CXXINCLUDES-y += -I$(LLAMA.CPP_SRC)/common
@@ -155,6 +156,18 @@ $(LLAMACPP_LIBGGML_BUILD)/.prepared: $(LLAMACPP_LIBGGML_BUILD)/model_related_con
 
 UK_PREPARE-$(CONFIG_LLAMACPP_LIBGGML) += $(LLAMACPP_LIBGGML_BUILD)/.prepared
 
+
+$(LLAMA.CPP_SRC)/examples/server/%.hpp: $(LLAMA.CPP_SRC)/examples/server/public/%
+	@( export NAME=$(subst .,_,$(subst -,_,$(notdir $<))) && \
+		echo "unsigned char $${NAME}[] = {" && \
+		cat $< | od -v -t x1 -An | sed -E 's/([0-9a-fA-F]+)/0x\1, /g' && \
+		echo "};" && \
+		echo "unsigned int $${NAME}_len = $(shell cat $< | wc -c );" \
+	) > $@
+
+$(LLAMACPP_BUILD)/.prepared: $(LLAMA.CPP_SRC)/examples/server/index.html.gz.hpp $(LLAMA.CPP_SRC)/examples/server/loading.html.hpp
+UK_PREPARE-$(CONFIG_LLAMACPP_APP_SERVER) += $(LLAMACPP_BUILD)/.prepared
+
 LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/arg.cpp
 LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/chat.cpp
 LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/common.cpp
@@ -169,6 +182,7 @@ LLAMACPP_LIBCOMMON_SRCS-y += $(COMMON_SRC)/build-info.cpp
 
 LLAMACPP_SRCS-$(CONFIG_LLAMACPP_APP_CLI) += $(LLAMA.CPP_SRC)/examples/main/main.cpp
 LLAMACPP_SRCS-$(CONFIG_LLAMACPP_APP_BENCH) += $(LLAMA.CPP_SRC)/examples/batched-bench/batched-bench.cpp
+LLAMACPP_SRCS-$(CONFIG_LLAMACPP_APP_SERVER) += $(LLAMA.CPP_SRC)/examples/server/server.cpp
 LLAMACPP_LIBS += llamacpp_libllama
 LLAMACPP_LIBS += llamacpp_libggml
 LLAMACPP_LIBS += llamacpp_libcommon
