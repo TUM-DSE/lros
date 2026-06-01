@@ -1,0 +1,25 @@
+From 9a3f915476c749873be4dcbcb8f81029d0b7d4f6 Mon Sep 17 00:00:00 2001
+From: Simon Kammermeier <simon.kammermeier@tum.de>
+Date: Sun, 31 May 2026 11:37:15 +0000
+Subject: [PATCH] Set TID for non-main thread as well
+
+---
+ __uk_init_tls.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/__uk_init_tls.c b/__uk_init_tls.c
+index 0cddb83..3da4038 100644
+--- a/__uk_init_tls.c
++++ b/__uk_init_tls.c
+@@ -224,6 +224,8 @@ int uk_thread_uktcb_init(struct uk_thread *thread, void *tcb)
+ 	td->next->prev = td;
+ 	td->prev->next = td;
+ 
++	td->tid = (int)uk_syscall_r_set_tid_address((long)&td->tid);
++
+ 	return 0;
+ }
+ 
+-- 
+2.51.2
+
