@@ -1,13 +1,13 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Unikraft/0.19.1~58c46f99-custom Configuration
+# Unikraft/0.19.1~58c46f99 Configuration
 #
-CONFIG_UK_FULLVERSION="0.19.1~58c46f99-custom"
+CONFIG_UK_FULLVERSION="0.19.1~58c46f99"
 CONFIG_UK_CODENAME="Pan"
 CONFIG_UK_ARCH="arm64"
 CONFIG_HOST_ARCH="arm64"
-CONFIG_UK_BASE="/home/simonk/lros-expe/lros/lros-unikraft"
-CONFIG_UK_APP="/home/simonk/lros-expe/lros"
+CONFIG_UK_BASE="/home/ilya/lros-expe_debugging/lros/lros-unikraft"
+CONFIG_UK_APP="/home/ilya/lros-expe_debugging/lros"
 CONFIG_UK_DEFNAME="bench-vacceloh"
 
 #
@@ -266,7 +266,7 @@ CONFIG_LIBUKALLOCBBUDDY=y
 # CONFIG_LIBUKALLOCPOOL is not set
 # CONFIG_LIBUKALLOCREGION is not set
 CONFIG_LIBUKALLOCSTACK=y
-CONFIG_LIBUKALLOCSTACK_PAGE_GUARDS=y
+# CONFIG_LIBUKALLOCSTACK_PAGE_GUARDS is not set
 CONFIG_LIBUKARGPARSE=y
 # CONFIG_LIBUKARGPARSE_TEST is not set
 CONFIG_LIBUKATOMIC=y

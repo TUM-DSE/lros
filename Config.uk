@@ -56,5 +56,8 @@ choice LLAMACPP_APP
 
         config LLAMACPP_APP_SERVER
                 bool "Bench"
+
+        config LLAMACPP_APP_PARALLEL
+                bool "Parallel (multi-client simulation)"
 endchoice
 

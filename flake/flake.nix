@@ -91,6 +91,15 @@
           (nixpkgs.lib.cmakeFeature "CMAKE_CUDA_ARCHITECTURES" cudaPackages.flags.cmakeCudaArchitecturesString)
         ];
       };
+      librknnrt = pkgs.stdenv.mkDerivation {
+        name = "librknnrt";
+        src = ../vaccel_plugins;
+        dontBuild = true;
+        installPhase = ''
+          mkdir -p $out/lib
+          cp librknnrt.so $out/lib/
+        '';
+      };
       vaccel-plugins-matmul = pkgs.stdenv.mkDerivation {
         name = "vaccel-plugins-matmul";
         src = ../vaccel_plugins;
@@ -98,6 +107,7 @@
         with cudaPackages; [
           cmake
           autoAddDriverRunpath
+          autoPatchelfHook
           cuda_nvcc
         ];
         buildInputs = with pkgs;
@@ -108,6 +118,8 @@
           cuda_cudart
           cuda_cccl
           vaccel
+          librknnrt
+          stdenv.cc.cc.lib
         ];
         cmakeFlags = [
           (nixpkgs.lib.cmakeBool "CMAKE_VERBOSE_MAKEFILE" true)
@@ -120,6 +132,7 @@
           [
             gcc13
             kraft
+            just
             myqemu
             myqemu-debug
             gnumake
@@ -136,6 +149,7 @@
           ++ nixpkgs.lib.optionals pkgs.stdenv.hostPlatform.isAarch [
             libsaxpy-vaccel
             vaccel-plugins-matmul
+            librknnrt
           ] ++
          ( with cudaPackages; [
            cuda_nvcc
