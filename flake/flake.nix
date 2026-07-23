@@ -11,7 +11,7 @@
         config = {
           allowUnfree = true;
           cudaSupport = true;
-          cudaCapabilities = ["7.2" "8.7"];
+          cudaCapabilities = nixpkgs.lib.optionals pkgs.stdenv.hostPlatform.isAarch ["7.2" "8.7"];
         };
       };
       cudaPackages = pkgs.cudaPackages_12_6;
@@ -126,13 +126,20 @@
           (nixpkgs.lib.cmakeFeature "CMAKE_CUDA_ARCHITECTURES" cudaPackages.flags.cmakeCudaArchitecturesString)
         ];
       };
-    in {
-      devShell = (pkgs.mkShell.override {stdenv = pkgs.gcc13Stdenv;}) {
+      # Paths to the built vAccel plugins, exported so a consuming flake (the
+      # top-level lros-expe flake) can splice them into a combined devShell
+      # instead of evaluating this flake as a second, separate `use flake`.
+      # Guarded by isAarch, so on x86_64 they are empty strings and the plugin
+      # derivations are never forced (pure eval stays cheap).
+      pluginEnv = {
+        VACCEL_PLUGINS_CUDA = nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${vaccel-plugins-matmul}/lib/libmatmulcuda.so";
+        VACCEL_PLUGINS_RKNN = nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${vaccel-plugins-matmul}/lib/libmatmulrknn.so";
+        VACCEL_PLUGINS_SAXPY = nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${libsaxpy-vaccel}/lib/libsaxpy.so";
+      };
+      devShell = (pkgs.mkShell.override {stdenv = pkgs.gcc13Stdenv;}) ({
         buildInputs = with pkgs;
           [
-            gcc13
             kraft
-            just
             myqemu
             myqemu-debug
             gnumake
@@ -157,10 +164,11 @@
            cuda_cccl # <nv/target>
            libcublas
          ]);
-
-        VACCEL_PLUGINS_CUDA = nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${vaccel-plugins-matmul}/lib/libmatmulcuda.so";
-        VACCEL_PLUGINS_RKNN = nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${vaccel-plugins-matmul}/lib/libmatmulrknn.so";
-        VACCEL_PLUGINS_SAXPY = nixpkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch "${libsaxpy-vaccel}/lib/libsaxpy.so";
-      };
+      } // pluginEnv);
+    in {
+      inherit devShell pluginEnv cudaPackages pkgs;
+      # Modern attribute path; `devShell` is kept above for standalone
+      # `nix develop path:lros/flake` back-compat.
+      devShells.default = devShell;
     });
 }
