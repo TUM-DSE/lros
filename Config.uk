@@ -9,17 +9,22 @@ config LLAMACPP_LLAMAFILE_SGEMM
 	bool "Use llamafile sgemm kernels"
 	default y
 
-config LLAMACPP_VACCEL
+choice LLAMACPP_BACKEND
+	prompt "llama backend"
 	depends on LLAMACPP_LIBGGML
-	depends on LIBVACCELRT
-	bool "Use vaccel llama backend"
-	default y
+	default LLAMACPP_VACCEL
 
-config LLAMACPP_VACCELOH
-	depends on LLAMACPP_LIBGGML
-	depends on LIBVACCELRT
-	bool "Use vacceloh llama backend"
-	default y
+	config LLAMACPP_CPU_ONLY
+		bool "CPU only"
+
+	config LLAMACPP_VACCEL
+		depends on LIBVACCELRT
+		bool "Use vaccel llama backend"
+
+	config LLAMACPP_VACCELOH
+		depends on LIBVACCELRT
+		bool "Use vacceloh llama backend"
+endchoice
 
 menuconfig LLAMACPP_LIBLLAMA 
 	bool "llama.cpp libllama target"
