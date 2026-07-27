@@ -20,6 +20,7 @@ unikraft:
     CONFIG_LIBUKLIBPARAM: 'y'
     CONFIG_LIBUKVMEM: 'y'
     CONFIG_LIBPOSIX_MMAP: 'y'
+    CONFIG_LIBUKBOOT_INITTLSF: 'y'
 
 
 targets:
@@ -125,3 +126,5 @@ libraries:
   musl: 0.19.0
   lwip:
     version: 0.19.0
+  tlsf:
+    source: ./lib-tlsf
